@@ -461,6 +461,21 @@ textarea {
   width: min(860px, calc(100% - 32px));
 }
 
+.guest-header {
+  display: grid;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.guest-header-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgb(39 36 50 / 0.16);
+}
+
 .event-memo {
   margin-top: 8px;
   color: #6b6375;

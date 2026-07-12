@@ -5,12 +5,26 @@ import { formatCandidateLabel } from "./lib.js";
 import ResponseTable from "./ResponseTable.jsx";
 
 const GUEST_NAME_KEY = "radio-meeting-scheduler:guest-name";
+const GUEST_HEADER_IMAGE = `${import.meta.env.BASE_URL}sunopa-header.png`;
 
 const ANSWER_OPTIONS = [
   { value: "ok", label: "○", hint: "参加できる" },
   { value: "maybe", label: "△", hint: "条件つき" },
   { value: "ng", label: "×", hint: "難しい" }
 ];
+
+function GuestHeader({ title, memo }) {
+  return (
+    <header className="app-header guest-header">
+      <img className="guest-header-image" src={GUEST_HEADER_IMAGE} alt="Sunoパ！ presented by Umbrella Parade" />
+      <div>
+        <span className="eyebrow">Umbrella Parade Toolkit</span>
+        <h1>{title}</h1>
+        {memo && <p className="event-memo">{memo}</p>}
+      </div>
+    </header>
+  );
+}
 
 export default function GuestApp({ eventId }) {
   const [loading, setLoading] = useState(true);
@@ -98,6 +112,7 @@ export default function GuestApp({ eventId }) {
   if (loading) {
     return (
       <main className="app-shell guest-shell">
+        <GuestHeader title="日程調整" />
         <p className="empty">読み込み中...</p>
       </main>
     );
@@ -106,12 +121,7 @@ export default function GuestApp({ eventId }) {
   if (!event) {
     return (
       <main className="app-shell guest-shell">
-        <header className="app-header">
-          <div>
-            <span className="eyebrow">Umbrella Parade Toolkit</span>
-            <h1>日程調整</h1>
-          </div>
-        </header>
+        <GuestHeader title="日程調整" />
         <p className="error-banner">{error || "イベントが見つかりませんでした。"}</p>
       </main>
     );
@@ -119,13 +129,7 @@ export default function GuestApp({ eventId }) {
 
   return (
     <main className="app-shell guest-shell">
-      <header className="app-header">
-        <div>
-          <span className="eyebrow">Umbrella Parade Toolkit</span>
-          <h1>{event.title}</h1>
-          {event.memo && <p className="event-memo">{event.memo}</p>}
-        </div>
-      </header>
+      <GuestHeader title={event.title} memo={event.memo} />
 
       {event.decidedAt && (
         <div className="decided-banner">
