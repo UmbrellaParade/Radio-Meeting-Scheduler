@@ -6,49 +6,27 @@ import {
   ClipboardCopy,
   Download,
   ExternalLink,
-  MessageSquareText,
   Plus,
   RefreshCcw,
+  Share2,
   Trash2,
   Upload
 } from "lucide-react";
 import "./styles.css";
+import {
+  addDays,
+  addMinutes,
+  candidateId,
+  formatCandidateLabel,
+  formatInputDate,
+  formatJapaneseDate,
+  toDate
+} from "./lib.js";
+import { apiConfigured, createEvent, decideEvent, fetchEvent } from "./api.js";
+import GuestApp from "./guest.jsx";
+import ResponseTable from "./ResponseTable.jsx";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
-const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
-
-const pad = (value) => String(value).padStart(2, "0");
-
-function toDate(dateString) {
-  return new Date(`${dateString}T00:00:00`);
-}
-
-function formatInputDate(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function addDays(dateString, amount) {
-  const date = toDate(dateString);
-  date.setDate(date.getDate() + amount);
-  return formatInputDate(date);
-}
-
-function formatJapaneseDate(dateString) {
-  if (!dateString) return "";
-  const date = toDate(dateString);
-  return `${date.getMonth() + 1}/${date.getDate()}（${WEEKDAYS[date.getDay()]}）`;
-}
-
-function addMinutes(time, minutes) {
-  const [hour, minute] = String(time || "00:00").split(":").map(Number);
-  const date = new Date(2000, 0, 1, hour || 0, minute || 0);
-  date.setMinutes(date.getMinutes() + Number(minutes || 0));
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function candidateId(date, start, durationMinutes) {
-  return `${date}-${start}-${durationMinutes}`;
-}
 
 function getDefaultCandidateRange(broadcastDate) {
   if (!broadcastDate) return { candidateStartDate: "", candidateEndDate: "" };
@@ -112,6 +90,7 @@ function makeDefaultState() {
     timeSlots: ["20:00", "21:00", "22:00"],
     candidates: [],
     chouseisanUrl: "",
+    share: null,
     decidedAt: "",
     meetingPlace: "オンライン（Discord / Zoomなど）",
     meetingNotes: ""
@@ -131,6 +110,7 @@ function normalizeState(input = {}) {
   delete next.leadStartDays;
   delete next.leadEndDays;
   if (!Array.isArray(next.candidates)) next.candidates = generateCandidates(next);
+  if (next.share && !next.share.id) next.share = null;
   return next;
 }
 
@@ -142,6 +122,10 @@ function loadState() {
   } catch {
     return makeDefaultState();
   }
+}
+
+function shareUrlFor(shareId) {
+  return `${window.location.origin}${window.location.pathname}?e=${shareId}`;
 }
 
 function copyText(text, label, setCopied) {
@@ -164,7 +148,149 @@ function TextInput(props) {
   return <input type="text" {...props} />;
 }
 
-function App() {
+function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, copied, setCopied }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [live, setLive] = useState(null); // {event, responses}
+  const [decideTarget, setDecideTarget] = useState("");
+
+  const shareUrl = data.share?.id ? shareUrlFor(data.share.id) : "";
+
+  const createShare = async () => {
+    if (enabledCandidates.length === 0) {
+      alert("候補日時がありません。先に候補日を生成してください。");
+      return;
+    }
+    if (data.share?.id && !confirm("すでに共有ページがあります。新しく作り直しますか？（今までの回答は新しいページに引き継がれません）")) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await createEvent({
+        title: eventTitle,
+        memo: memoText,
+        candidates: enabledCandidates.map(({ id, date, start, end }) => ({ id, date, start, end }))
+      });
+      update({ share: { id: result.id, adminKey: result.adminKey } });
+      setLive(null);
+    } catch (err) {
+      setError(err.message || "作成に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refresh = async () => {
+    if (!data.share?.id) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await fetchEvent(data.share.id);
+      setLive({ event: result.event, responses: result.responses || [] });
+    } catch (err) {
+      setError(err.message || "取得に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decide = async () => {
+    if (!data.share?.id || !decideTarget) return;
+    const candidate = (live?.event?.candidates || []).find((item) => item.id === decideTarget);
+    const label = candidate ? formatCandidateLabel(candidate) : decideTarget;
+    setBusy(true);
+    setError("");
+    try {
+      await decideEvent({ id: data.share.id, adminKey: data.share.adminKey, decidedAt: label });
+      update({ decidedAt: label });
+      await refresh();
+    } catch (err) {
+      setError(err.message || "決定の保存に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>共有調整ページ</h2>
+        <span>ゲストさんに直接○△×を入力してもらう</span>
+      </div>
+
+      {!apiConfigured() && (
+        <p className="hint setup-hint">
+          この機能を使うにはGASバックエンドの設定が必要です。リポジトリの <code>gas/README.md</code>{" "}
+          の手順（約5分）でデプロイし、<code>src/config.js</code> にURLを設定してください。
+        </p>
+      )}
+
+      {error && <p className="error-banner">{error}</p>}
+
+      {!data.share?.id ? (
+        <button className="primary" onClick={createShare} disabled={busy || !apiConfigured()}>
+          <Share2 size={16} />
+          {busy ? "作成中..." : "共有ページを作成"}
+        </button>
+      ) : (
+        <>
+          <div className="url-row share-url-row">
+            <TextInput value={shareUrl} readOnly />
+            <button className="secondary" onClick={() => copyText(shareUrl, "share-url", setCopied)}>
+              {copied === "share-url" ? <Check size={16} /> : <ClipboardCopy size={16} />}
+              {copied === "share-url" ? "コピー済み" : "URLコピー"}
+            </button>
+            <a className="secondary link-button" href={shareUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={16} />開く
+            </a>
+          </div>
+
+          <div className="share-actions">
+            <button className="secondary" onClick={refresh} disabled={busy}>
+              <RefreshCcw size={16} />
+              {busy ? "取得中..." : "回答状況を更新"}
+            </button>
+            <button className="ghost" onClick={createShare} disabled={busy} title="候補を変えた場合など">
+              <Share2 size={16} />作り直す
+            </button>
+          </div>
+
+          {live && (
+            <>
+              <ResponseTable
+                candidates={live.event.candidates}
+                responses={live.responses}
+                decidedCandidateId={decideTarget}
+              />
+              <div className="decide-row">
+                <select value={decideTarget} onChange={(event) => setDecideTarget(event.target.value)}>
+                  <option value="">日程を選んで決定...</option>
+                  {live.event.candidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {formatCandidateLabel(candidate)}
+                    </option>
+                  ))}
+                </select>
+                <button className="primary" onClick={decide} disabled={busy || !decideTarget}>
+                  <Check size={16} />この日時に決定
+                </button>
+              </div>
+              {live.event.decidedAt && (
+                <p className="decided-banner">
+                  <Check size={16} />決定済み: <strong>{live.event.decidedAt}</strong>
+                  （ゲストページにも表示されます）
+                </p>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function HostApp() {
   const [data, setData] = useState(loadState);
   const [copied, setCopied] = useState("");
   const [newSlot, setNewSlot] = useState("19:30");
@@ -190,7 +316,7 @@ function App() {
   }, [data.episodeTitle, data.guestName]);
 
   const candidateLines = useMemo(
-    () => enabledCandidates.map((candidate) => `${formatJapaneseDate(candidate.date)} ${candidate.start}-${candidate.end}`),
+    () => enabledCandidates.map((candidate) => formatCandidateLabel(candidate)),
     [enabledCandidates]
   );
 
@@ -208,6 +334,9 @@ function App() {
     [data.broadcastDate, data.durationMinutes, data.meetingPlace]
   );
 
+  const shareUrl = data.share?.id ? shareUrlFor(data.share.id) : "";
+  const scheduleUrl = shareUrl || data.chouseisanUrl;
+
   const chouseisanText = useMemo(
     () =>
       [
@@ -223,37 +352,6 @@ function App() {
     [candidateLines, eventTitle, memoText]
   );
 
-  const codexPack = useMemo(
-    () =>
-      [
-        "# Codex Task Pack",
-        "",
-        "目的:",
-        "調整さんでゲスト打ち合わせ用の日程調整ページを作成してください。",
-        "",
-        "作成先:",
-        "https://chouseisan.com/",
-        "",
-        "イベント名:",
-        eventTitle,
-        "",
-        "メモ:",
-        memoText,
-        "",
-        "候補日時:",
-        candidateLines.join("\n") || "-",
-        "",
-        "作成後に返してほしいもの:",
-        "1. 調整さんURL",
-        "2. ゲストさんに送るDM文面",
-        "3. 日程確定後にRadio Meeting Schedulerへ記録すべき内容",
-        "",
-        "注意:",
-        "候補日時を勝手に増やさず、上記候補だけで作成してください。"
-      ].join("\n"),
-    [candidateLines, eventTitle, memoText]
-  );
-
   const guestDm = useMemo(
     () =>
       [
@@ -263,12 +361,12 @@ function App() {
         `所要時間は${data.durationMinutes || 30}分ほどで、${data.meetingPlace || "オンライン"}で予定しています。`,
         "",
         "以下のURLから、参加できる日時に○、難しい日時に×、条件つきなら△を入れてもらえると助かります。",
-        data.chouseisanUrl || "（調整さんURLをここに貼ります）",
+        scheduleUrl || "（調整ページのURLをここに貼ります）",
         "",
         "当日は番組の流れ、紹介楽曲、記事掲載内容、NG事項などを軽く確認できればと思っています。",
         "よろしくお願いします！"
       ].join("\n"),
-    [data.chouseisanUrl, data.durationMinutes, data.guestName, data.meetingPlace]
+    [scheduleUrl, data.durationMinutes, data.guestName, data.meetingPlace]
   );
 
   const regenerate = () => {
@@ -347,7 +445,7 @@ function App() {
         <div>
           <span className="eyebrow">Umbrella Parade Toolkit</span>
           <h1>Radio Meeting Scheduler</h1>
-          <p>ゲスト打ち合わせの日程候補、調整さん用コピー、Codex依頼文、DM文面をまとめます。</p>
+          <p>ゲスト打ち合わせの日程候補づくり、共有調整ページ、DM文面をまとめます。</p>
         </div>
         <div className="header-actions">
           <button className="secondary" onClick={exportJson}>
@@ -458,10 +556,19 @@ function App() {
         </div>
       </section>
 
+      <SharePanel
+        data={data}
+        update={update}
+        eventTitle={eventTitle}
+        memoText={memoText}
+        enabledCandidates={enabledCandidates}
+        copied={copied}
+        setCopied={setCopied}
+      />
+
       <section className="outputs">
-        <OutputBlock title="調整さん入力用" text={chouseisanText} copied={copied} copyId="chouseisan" onCopy={copyText} setCopied={setCopied} />
-        <OutputBlock title="Codex依頼文" text={codexPack} copied={copied} copyId="codex" onCopy={copyText} setCopied={setCopied} />
         <OutputBlock title="ゲストDM文面" text={guestDm} copied={copied} copyId="dm" onCopy={copyText} setCopied={setCopied} />
+        <OutputBlock title="調整さん入力用（予備）" text={chouseisanText} copied={copied} copyId="chouseisan" onCopy={copyText} setCopied={setCopied} />
       </section>
 
       <section className="panel">
@@ -470,7 +577,7 @@ function App() {
           <span>次の制作工程へ渡すメモ</span>
         </div>
         <div className="form-grid">
-          <Field label="調整さんURL" wide>
+          <Field label="調整さんURL（外部を使う場合）" wide>
             <div className="url-row">
               <TextInput value={data.chouseisanUrl} onChange={(event) => update({ chouseisanUrl: event.target.value })} placeholder="https://chouseisan.com/..." />
               {data.chouseisanUrl && (
@@ -484,7 +591,7 @@ function App() {
             <TextInput value={data.decidedAt} onChange={(event) => update({ decidedAt: event.target.value })} placeholder="例: 7/18（土）21:00-21:30" />
           </Field>
           <Field label="ステータス">
-            <select value={data.decidedAt ? "fixed" : data.chouseisanUrl ? "waiting" : "draft"} readOnly>
+            <select value={data.decidedAt ? "fixed" : scheduleUrl ? "waiting" : "draft"} readOnly>
               <option value="draft">候補作成中</option>
               <option value="waiting">回答待ち</option>
               <option value="fixed">日程決定</option>
@@ -514,4 +621,10 @@ function OutputBlock({ title, text, copied, copyId, onCopy, setCopied }) {
   );
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+function Root() {
+  const eventId = new URLSearchParams(window.location.search).get("e");
+  if (eventId) return <GuestApp eventId={eventId} />;
+  return <HostApp />;
+}
+
+createRoot(document.getElementById("root")).render(<Root />);

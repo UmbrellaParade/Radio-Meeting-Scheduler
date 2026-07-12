@@ -6,10 +6,13 @@ It keeps the meeting workflow separate from Radio Article Studio:
 
 - create meeting date candidates from a broadcast date
 - choose candidate time slots
-- copy text for Chouseisan
-- copy a Codex task pack for creating the Chouseisan event
+- create a self-hosted scheduling page (Chouseisan-style): guests open a shared
+  URL (`?e=EVENT_ID`) and answer with ○△× — answers are stored via a Google
+  Apps Script backend (see [gas/README.md](gas/README.md) for setup)
+- view everyone's answers in a summary table and decide the meeting time
+- copy text for Chouseisan (fallback)
 - copy a guest DM message
-- store the Chouseisan URL, decided meeting time, and notes
+- store the decided meeting time and notes
 - export/import a local JSON backup
 
 ## Development
