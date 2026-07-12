@@ -892,8 +892,8 @@ function HostApp() {
                         <button className="secondary" onClick={saveEditedTemplateBlock} disabled={!editingBlockName.trim() || !editingBlockBody.trim()}>
                           <Check size={16} />保存
                         </button>
-                        <button className="ghost" onClick={cancelEditTemplateBlock} aria-label="文章ブロックの編集をキャンセル">
-                          <X size={16} />
+                        <button className="secondary" onClick={cancelEditTemplateBlock}>
+                          <X size={16} />キャンセル
                         </button>
                       </>
                     ) : (
@@ -903,8 +903,8 @@ function HostApp() {
                           <small>{block.body.split("\n")[0]}</small>
                         </div>
                         <button className="secondary" onClick={() => insertBlock(block)}>挿入</button>
-                        <button className="ghost" onClick={() => startEditTemplateBlock(block)} aria-label="文章ブロックを編集">
-                          <Pencil size={16} />
+                        <button className="secondary" onClick={() => startEditTemplateBlock(block)}>
+                          <Pencil size={16} />編集
                         </button>
                         <button
                           className="icon-danger"
