@@ -6,6 +6,7 @@ import {
   ClipboardCopy,
   Download,
   ExternalLink,
+  MessageSquareText,
   Plus,
   RefreshCcw,
   Share2,
@@ -27,6 +28,84 @@ import GuestApp from "./guest.jsx";
 import ResponseTable from "./ResponseTable.jsx";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
+
+const DEFAULT_DM_TEMPLATE = [
+  "こんばんは！{guestNameWithSuffix}",
+  "",
+  "Sunoパ！ゲスト回の事前打ち合わせ日程を調整させてください。",
+  "所要時間は{durationMinutes}分ほどで、{meetingPlace}で予定しています。",
+  "",
+  "以下のURLから、ご都合の良い日時を入力してもらえると助かります。",
+  "{scheduleUrl}",
+  "",
+  "当日は番組の流れ、紹介楽曲、記事掲載内容、NG事項などを軽く確認できればと思っています。",
+  "よろしくお願いします！"
+].join("\n");
+
+const DEFAULT_TEMPLATE_BLOCKS = [
+  {
+    id: "meeting-topics",
+    name: "打ち合わせ内容",
+    body: [
+      "打ち合わせでは、以下を軽く確認できればと思っています。",
+      "・番組全体の流れ",
+      "・紹介する楽曲や活動内容",
+      "・記事やSNSで触れてOKな内容",
+      "・触れないでほしい話題や表記の注意点"
+    ].join("\n")
+  },
+  {
+    id: "broadcast-flow",
+    name: "当日の仮配信フロー",
+    body: [
+      "当日の流れは仮でこんなイメージです。",
+      "1. オープニングとゲスト紹介",
+      "2. 活動や制作についてのお話",
+      "3. 紹介楽曲の話",
+      "4. 告知や今後の予定",
+      "5. エンディング"
+    ].join("\n")
+  }
+];
+
+const DEFAULT_DM_PRESETS = [
+  {
+    id: "basic",
+    name: "基本の打ち合わせDM",
+    body: DEFAULT_DM_TEMPLATE
+  },
+  {
+    id: "friendly",
+    name: "少しやわらかめ",
+    body: [
+      "こんばんは！{guestNameWithSuffix}",
+      "",
+      "ゲスト回の件、ありがとうございます！",
+      "放送前に一度、{durationMinutes}分ほど軽く打ち合わせできればと思っています。",
+      "",
+      "候補はこちらです。",
+      "{scheduleUrl}",
+      "",
+      "番組の流れや紹介内容、触れない方がいいことなどを確認できれば大丈夫です。",
+      "よろしくお願いします！"
+    ].join("\n")
+  }
+];
+
+const TEMPLATE_VARIABLES = [
+  "{guestName}",
+  "{guestNameWithSuffix}",
+  "{episodeTitle}",
+  "{broadcastDate}",
+  "{durationMinutes}",
+  "{meetingPlace}",
+  "{scheduleUrl}",
+  "{candidateList}"
+];
+
+function newId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
 
 function getDefaultCandidateRange(broadcastDate) {
   if (!broadcastDate) return { candidateStartDate: "", candidateEndDate: "" };
@@ -89,11 +168,14 @@ function makeDefaultState() {
     durationMinutes: 30,
     timeSlots: ["20:00", "21:00", "22:00"],
     candidates: [],
-    chouseisanUrl: "",
+    scheduleUrl: "",
     share: null,
     decidedAt: "",
     meetingPlace: "オンライン（Discord / Zoomなど）",
-    meetingNotes: ""
+    meetingNotes: "",
+    guestDmDraft: DEFAULT_DM_TEMPLATE,
+    templateBlocks: [],
+    dmPresets: []
   };
   return { ...state, candidates: generateCandidates(state) };
 }
@@ -111,6 +193,12 @@ function normalizeState(input = {}) {
   delete next.leadEndDays;
   if (!Array.isArray(next.candidates)) next.candidates = generateCandidates(next);
   if (next.share && !next.share.id) next.share = null;
+  const legacyScheduleUrlKey = ["chousei", "sanUrl"].join("");
+  if (!next.scheduleUrl && next[legacyScheduleUrlKey]) next.scheduleUrl = next[legacyScheduleUrlKey];
+  delete next[legacyScheduleUrlKey];
+  if (!next.guestDmDraft) next.guestDmDraft = DEFAULT_DM_TEMPLATE;
+  if (!Array.isArray(next.templateBlocks)) next.templateBlocks = [];
+  if (!Array.isArray(next.dmPresets)) next.dmPresets = [];
   return next;
 }
 
@@ -133,6 +221,21 @@ function copyText(text, label, setCopied) {
     setCopied(label);
     window.setTimeout(() => setCopied(""), 1600);
   });
+}
+
+function renderTemplate(template, data, candidateLines) {
+  const guestName = String(data.guestName || "").trim();
+  const values = {
+    guestName: guestName || "ゲスト",
+    guestNameWithSuffix: guestName ? `${guestName}さん` : "ゲストさん",
+    episodeTitle: data.episodeTitle || "Sunoパ！ゲスト回",
+    broadcastDate: formatJapaneseDate(data.broadcastDate) || "未定",
+    durationMinutes: String(data.durationMinutes || 30),
+    meetingPlace: data.meetingPlace || "オンライン",
+    scheduleUrl: data.scheduleUrl || "（共有ページを作成するとURLが入ります）",
+    candidateList: candidateLines.length ? candidateLines.join("\n") : "（候補日時を生成してください）"
+  };
+  return String(template || "").replace(/\{\{?\s*([a-zA-Z0-9_]+)\s*\}\}?/g, (match, key) => values[key] ?? match);
 }
 
 function Field({ label, children, wide = false }) {
@@ -328,6 +431,10 @@ function HostApp() {
   const [data, setData] = useState(loadState);
   const [copied, setCopied] = useState("");
   const [newSlot, setNewSlot] = useState("19:30");
+  const [newBlockName, setNewBlockName] = useState("");
+  const [newBlockBody, setNewBlockBody] = useState("");
+  const [newPresetName, setNewPresetName] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState("basic");
 
   const update = (patch) => {
     setData((current) => {
@@ -354,6 +461,11 @@ function HostApp() {
     [enabledCandidates]
   );
 
+  const templateBlocks = useMemo(() => [...DEFAULT_TEMPLATE_BLOCKS, ...(data.templateBlocks || [])], [data.templateBlocks]);
+  const dmPresets = useMemo(() => [...DEFAULT_DM_PRESETS, ...(data.dmPresets || [])], [data.dmPresets]);
+  const selectedPreset = dmPresets.find((preset) => preset.id === selectedPresetId) ?? dmPresets[0];
+  const selectedCustomPreset = (data.dmPresets || []).find((preset) => preset.id === selectedPresetId);
+
   const memoText = useMemo(
     () =>
       [
@@ -369,39 +481,44 @@ function HostApp() {
   );
 
   const shareUrl = data.share?.id ? shareUrlFor(data.share.id) : "";
-  const scheduleUrl = shareUrl || data.chouseisanUrl;
+  const scheduleUrl = shareUrl || data.scheduleUrl || "";
+  const templateData = useMemo(() => ({ ...data, scheduleUrl }), [data, scheduleUrl]);
 
-  const chouseisanText = useMemo(
+  const codexPack = useMemo(
     () =>
       [
-        "【イベント名】",
+        "# Codex Task Pack",
+        "",
+        "目的:",
+        "Radio Meeting Schedulerでゲスト打ち合わせの日程候補とDM文面を整えてください。",
+        "",
+        "日程調整URL:",
+        scheduleUrl || "（未設定）",
+        "",
+        "イベント名:",
         eventTitle,
         "",
-        "【メモ】",
+        "メモ:",
         memoText,
         "",
-        "【候補日時】",
-        candidateLines.join("\n")
+        "候補日時:",
+        candidateLines.join("\n") || "-",
+        "",
+        "ゲストDM文面:",
+        renderTemplate(data.guestDmDraft, templateData, candidateLines),
+        "",
+        "作成後に返してほしいもの:",
+        "1. ゲストさんに送るDM文面",
+        "2. 日程確定後にRadio Meeting Schedulerへ記録すべき内容",
+        "",
+        "注意:",
+        "候補日時を勝手に増やさず、上記候補だけで作成してください。"
       ].join("\n"),
-    [candidateLines, eventTitle, memoText]
+    [candidateLines, data.guestDmDraft, eventTitle, memoText, scheduleUrl, templateData]
   );
 
-  const guestDm = useMemo(
-    () =>
-      [
-        data.guestName.trim() ? `${data.guestName.trim()}さん` : "こんにちは！",
-        "",
-        "Sunoパ！ゲスト回の事前打ち合わせ日程を調整させてください。",
-        `所要時間は${data.durationMinutes || 30}分ほどで、${data.meetingPlace || "オンライン"}で予定しています。`,
-        "",
-        "以下のURLから、参加できる日時に○、難しい日時に×、条件つきなら△を入れてもらえると助かります。",
-        scheduleUrl || "（調整ページのURLをここに貼ります）",
-        "",
-        "当日は番組の流れ、紹介楽曲、記事掲載内容、NG事項などを軽く確認できればと思っています。",
-        "よろしくお願いします！"
-      ].join("\n"),
-    [scheduleUrl, data.durationMinutes, data.guestName, data.meetingPlace]
-  );
+  const guestDm = useMemo(() => renderTemplate(data.guestDmDraft, templateData, candidateLines), [candidateLines, data.guestDmDraft, templateData]);
+  const candidateCopyText = useMemo(() => candidateLines.join("\n") || "候補日時がまだありません。", [candidateLines]);
 
   const regenerate = () => {
     update({ candidates: generateCandidates(data) });
@@ -439,6 +556,72 @@ function HostApp() {
 
   const removeTimeSlot = (index) => {
     update({ timeSlots: data.timeSlots.filter((_, slotIndex) => slotIndex !== index) });
+  };
+
+  const insertBlock = (block) => {
+    if (!block?.body) return;
+    const current = data.guestDmDraft || "";
+    update({ guestDmDraft: `${current}${current.trim() ? "\n\n" : ""}${block.body}` });
+  };
+
+  const saveTemplateBlock = () => {
+    const name = newBlockName.trim();
+    const body = newBlockBody.trim();
+    if (!name || !body) return;
+    update({
+      templateBlocks: [
+        ...(data.templateBlocks || []),
+        {
+          id: newId("block"),
+          name,
+          body
+        }
+      ]
+    });
+    setNewBlockName("");
+    setNewBlockBody("");
+  };
+
+  const removeTemplateBlock = (id) => {
+    update({ templateBlocks: (data.templateBlocks || []).filter((block) => block.id !== id) });
+  };
+
+  const applyDmPreset = (preset) => {
+    if (!preset) return;
+    setSelectedPresetId(preset.id);
+    update({ guestDmDraft: preset.body });
+  };
+
+  const saveDmPreset = () => {
+    const body = String(data.guestDmDraft || "").trim();
+    if (!body) return;
+    const name = newPresetName.trim() || `DMプリセット ${(data.dmPresets || []).length + 1}`;
+    const preset = {
+      id: newId("dm"),
+      name,
+      body: data.guestDmDraft
+    };
+    update({ dmPresets: [preset, ...(data.dmPresets || [])] });
+    setSelectedPresetId(preset.id);
+    setNewPresetName("");
+  };
+
+  const overwriteDmPreset = () => {
+    if (!selectedCustomPreset) return;
+    update({
+      dmPresets: (data.dmPresets || []).map((preset) =>
+        preset.id === selectedCustomPreset.id
+          ? { ...preset, name: newPresetName.trim() || preset.name, body: data.guestDmDraft }
+          : preset
+      )
+    });
+    setNewPresetName("");
+  };
+
+  const removeDmPreset = () => {
+    if (!selectedCustomPreset) return;
+    update({ dmPresets: (data.dmPresets || []).filter((preset) => preset.id !== selectedCustomPreset.id) });
+    setSelectedPresetId("basic");
   };
 
   const exportJson = () => {
@@ -479,7 +662,7 @@ function HostApp() {
         <div>
           <span className="eyebrow">Umbrella Parade Toolkit</span>
           <h1>Radio Meeting Scheduler</h1>
-          <p>ゲスト打ち合わせの日程候補づくり、共有調整ページ、DM文面をまとめます。</p>
+          <p>ゲスト打ち合わせの日程候補づくり、共有調整ページ、DM文面、文章ブロック、プリセットをまとめます。</p>
         </div>
         <div className="header-actions">
           <button className="secondary" onClick={exportJson}>
@@ -600,9 +783,90 @@ function HostApp() {
         setCopied={setCopied}
       />
 
-      <section className="outputs">
-        <OutputBlock title="ゲストDM文面" text={guestDm} copied={copied} copyId="dm" onCopy={copyText} setCopied={setCopied} />
-        <OutputBlock title="調整さん入力用（予備）" text={chouseisanText} copied={copied} copyId="chouseisan" onCopy={copyText} setCopied={setCopied} />
+      <section className="dm-workspace">
+        <article className="output-block dm-editor">
+          <div className="output-head">
+            <h2>ゲストDM文面</h2>
+            <div className="inline-actions">
+              <button className="secondary" onClick={() => update({ guestDmDraft: DEFAULT_DM_TEMPLATE })}>
+                <RefreshCcw size={16} />初期文
+              </button>
+              <button className="secondary" onClick={() => copyText(guestDm, "dm", setCopied)}>
+                {copied === "dm" ? <Check size={16} /> : <ClipboardCopy size={16} />}
+                {copied === "dm" ? "コピー済み" : "コピー"}
+              </button>
+            </div>
+          </div>
+          <textarea value={data.guestDmDraft} onChange={(event) => update({ guestDmDraft: event.target.value })} />
+          <p className="hint">差し込み: {TEMPLATE_VARIABLES.join(" / ")}。コピー時に実際の内容へ置き換わります。</p>
+          <div className="rendered-preview">
+            <strong>コピー内容プレビュー</strong>
+            <pre>{guestDm}</pre>
+          </div>
+        </article>
+
+        <div className="side-stack">
+          <article className="output-block">
+            <div className="output-head">
+              <h2>DMプリセット</h2>
+              <button className="secondary" onClick={() => applyDmPreset(selectedPreset)} disabled={!selectedPreset}>
+                <MessageSquareText size={16} />反映
+              </button>
+            </div>
+            <select value={selectedPreset?.id || ""} onChange={(event) => setSelectedPresetId(event.target.value)}>
+              {dmPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.name}</option>
+              ))}
+            </select>
+            <div className="preset-actions">
+              <TextInput value={newPresetName} onChange={(event) => setNewPresetName(event.target.value)} placeholder="プリセット名" />
+              <button className="secondary" onClick={saveDmPreset}>
+                <Plus size={16} />現在のDMを保存
+              </button>
+              <button className="secondary" onClick={overwriteDmPreset} disabled={!selectedCustomPreset}>
+                <Check size={16} />選択プリセットを上書き
+              </button>
+              <button className="icon-danger" onClick={removeDmPreset} disabled={!selectedCustomPreset} aria-label="DMプリセットを削除">
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </article>
+
+          <article className="output-block">
+            <div className="output-head">
+              <h2>文章ブロック</h2>
+            </div>
+            <div className="block-list">
+              {templateBlocks.map((block) => {
+                const custom = (data.templateBlocks || []).some((item) => item.id === block.id);
+                return (
+                  <div className="block-row" key={block.id}>
+                    <div>
+                      <strong>{block.name}</strong>
+                      <small>{block.body.split("\n")[0]}</small>
+                    </div>
+                    <button className="secondary" onClick={() => insertBlock(block)}>挿入</button>
+                    <button className="icon-danger" onClick={() => removeTemplateBlock(block.id)} disabled={!custom} aria-label="文章ブロックを削除">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="block-form">
+              <TextInput value={newBlockName} onChange={(event) => setNewBlockName(event.target.value)} placeholder="ブロック名（例: 当日の確認事項）" />
+              <textarea value={newBlockBody} onChange={(event) => setNewBlockBody(event.target.value)} placeholder="挿入したい文章ブロック" />
+              <button className="secondary" onClick={saveTemplateBlock}>
+                <Plus size={16} />ブロック登録
+              </button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="outputs compact-outputs">
+        <OutputBlock title="候補日時コピー" text={candidateCopyText} copied={copied} copyId="candidates" onCopy={copyText} setCopied={setCopied} />
+        <OutputBlock title="Codex依頼文" text={codexPack} copied={copied} copyId="codex" onCopy={copyText} setCopied={setCopied} />
       </section>
 
       <section className="panel">
@@ -611,16 +875,6 @@ function HostApp() {
           <span>次の制作工程へ渡すメモ</span>
         </div>
         <div className="form-grid">
-          <Field label="調整さんURL（外部を使う場合）" wide>
-            <div className="url-row">
-              <TextInput value={data.chouseisanUrl} onChange={(event) => update({ chouseisanUrl: event.target.value })} placeholder="https://chouseisan.com/..." />
-              {data.chouseisanUrl && (
-                <a className="secondary link-button" href={data.chouseisanUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink size={16} />開く
-                </a>
-              )}
-            </div>
-          </Field>
           <Field label="決定日時">
             <TextInput value={data.decidedAt} onChange={(event) => update({ decidedAt: event.target.value })} placeholder="例: 7/18（土）21:00-21:30" />
           </Field>
