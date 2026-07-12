@@ -326,7 +326,7 @@ function App() {
               <TextInput value={data.episodeTitle} onChange={(event) => update({ episodeTitle: event.target.value })} />
             </Field>
             <Field label="ゲスト名">
-              <TextInput value={data.guestName} onChange={(event) => update({ guestName: event.target.value })} placeholder="例: 結音" />
+              <TextInput value={data.guestName} onChange={(event) => update({ guestName: event.target.value })} placeholder="例: ヴェル13世" />
             </Field>
             <Field label="放送予定日">
               <input type="date" value={data.broadcastDate} onChange={(event) => update({ broadcastDate: event.target.value })} />
