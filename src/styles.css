@@ -199,6 +199,31 @@ h2 {
   font-weight: 900;
 }
 
+.hint {
+  margin: -2px 0 0;
+  color: #756d7d;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.hint.wide {
+  grid-column: 1 / -1;
+}
+
+.number-unit {
+  display: grid;
+  grid-template-columns: minmax(86px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.number-unit span {
+  min-width: 68px;
+  color: #5e5669;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 input,
 select,
 textarea {

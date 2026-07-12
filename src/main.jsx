@@ -338,12 +338,19 @@ function App() {
                 <option value={60}>60分</option>
               </select>
             </Field>
-            <Field label="候補開始">
-              <input type="number" min="1" max="30" value={data.leadStartDays} onChange={(event) => update({ leadStartDays: Number(event.target.value) })} />
+            <Field label="候補に入れる最初の日">
+              <div className="number-unit">
+                <input type="number" min="1" max="30" value={data.leadStartDays} onChange={(event) => update({ leadStartDays: Number(event.target.value) })} />
+                <span>日前から</span>
+              </div>
             </Field>
-            <Field label="候補終了">
-              <input type="number" min="0" max="30" value={data.leadEndDays} onChange={(event) => update({ leadEndDays: Number(event.target.value) })} />
+            <Field label="候補に入れる最後の日">
+              <div className="number-unit">
+                <input type="number" min="0" max="30" value={data.leadEndDays} onChange={(event) => update({ leadEndDays: Number(event.target.value) })} />
+                <span>日前まで</span>
+              </div>
             </Field>
+            <p className="hint wide">例: 7日前から1日前までなら、放送1週間前から前日までを候補にします。</p>
             <Field label="打ち合わせ場所" wide>
               <TextInput value={data.meetingPlace} onChange={(event) => update({ meetingPlace: event.target.value })} />
             </Field>
@@ -357,7 +364,7 @@ function App() {
           <div className="time-section">
             <div className="subhead">
               <strong>候補時間</strong>
-              <span>放送日の{data.leadStartDays}日前から{data.leadEndDays}日前まで</span>
+              <span>候補範囲: 放送日の{data.leadStartDays}日前から{data.leadEndDays}日前まで</span>
             </div>
             <div className="time-list">
               {data.timeSlots.map((slot, index) => (
