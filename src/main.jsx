@@ -50,40 +50,63 @@ function candidateId(date, start, durationMinutes) {
   return `${date}-${start}-${durationMinutes}`;
 }
 
+function getDefaultCandidateRange(broadcastDate) {
+  if (!broadcastDate) return { candidateStartDate: "", candidateEndDate: "" };
+  return {
+    candidateStartDate: addDays(broadcastDate, -7),
+    candidateEndDate: addDays(broadcastDate, -1)
+  };
+}
+
+function normalizeCandidateRange(settings) {
+  const fallback = getDefaultCandidateRange(settings.broadcastDate);
+  const legacyStartDays = Number(settings.leadStartDays || 7);
+  const legacyEndDays = Number(settings.leadEndDays || 1);
+  const candidateStartDate =
+    settings.candidateStartDate || (settings.broadcastDate ? addDays(settings.broadcastDate, -legacyStartDays) : fallback.candidateStartDate);
+  const candidateEndDate =
+    settings.candidateEndDate || (settings.broadcastDate ? addDays(settings.broadcastDate, -legacyEndDays) : fallback.candidateEndDate);
+  if (!candidateStartDate || !candidateEndDate) return { startDate: "", endDate: "" };
+  return candidateStartDate <= candidateEndDate
+    ? { startDate: candidateStartDate, endDate: candidateEndDate }
+    : { startDate: candidateEndDate, endDate: candidateStartDate };
+}
+
 function generateCandidates(settings) {
-  if (!settings.broadcastDate) return [];
-  const start = Number(settings.leadStartDays || 7);
-  const end = Number(settings.leadEndDays || 1);
-  const first = Math.max(start, end);
-  const last = Math.min(start, end);
+  const { startDate, endDate } = normalizeCandidateRange(settings);
+  if (!startDate || !endDate) return [];
   const candidates = [];
-  for (let offset = first; offset >= last; offset -= 1) {
-    const date = addDays(settings.broadcastDate, -offset);
+  const current = toDate(startDate);
+  const end = toDate(endDate);
+  while (current <= end) {
+    const date = formatInputDate(current);
     const day = toDate(date).getDay();
-    if (!settings.includeWeekends && (day === 0 || day === 6)) continue;
-    for (const startTime of settings.timeSlots) {
-      const cleanStart = startTime || "20:00";
-      const endTime = addMinutes(cleanStart, settings.durationMinutes);
-      candidates.push({
-        id: candidateId(date, cleanStart, settings.durationMinutes),
-        date,
-        start: cleanStart,
-        end: endTime,
-        enabled: true
-      });
+    if (settings.includeWeekends || (day !== 0 && day !== 6)) {
+      for (const startTime of settings.timeSlots) {
+        const cleanStart = startTime || "20:00";
+        const endTime = addMinutes(cleanStart, settings.durationMinutes);
+        candidates.push({
+          id: candidateId(date, cleanStart, settings.durationMinutes),
+          date,
+          start: cleanStart,
+          end: endTime,
+          enabled: true
+        });
+      }
     }
+    current.setDate(current.getDate() + 1);
   }
   return candidates;
 }
 
 function makeDefaultState() {
   const broadcastDate = formatInputDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000));
+  const candidateRange = getDefaultCandidateRange(broadcastDate);
   const state = {
     episodeTitle: "Sunoパ！ゲスト回",
     guestName: "",
     broadcastDate,
-    leadStartDays: 7,
-    leadEndDays: 1,
+    ...candidateRange,
     includeWeekends: true,
     durationMinutes: 30,
     timeSlots: ["20:00", "21:00", "22:00"],
@@ -96,11 +119,26 @@ function makeDefaultState() {
   return { ...state, candidates: generateCandidates(state) };
 }
 
+function normalizeState(input = {}) {
+  const base = makeDefaultState();
+  const next = { ...base, ...input };
+  if (!next.candidateStartDate && next.broadcastDate) {
+    next.candidateStartDate = addDays(next.broadcastDate, -Number(next.leadStartDays || 7));
+  }
+  if (!next.candidateEndDate && next.broadcastDate) {
+    next.candidateEndDate = addDays(next.broadcastDate, -Number(next.leadEndDays || 1));
+  }
+  delete next.leadStartDays;
+  delete next.leadEndDays;
+  if (!Array.isArray(next.candidates)) next.candidates = generateCandidates(next);
+  return next;
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return makeDefaultState();
-    return { ...makeDefaultState(), ...JSON.parse(raw) };
+    return normalizeState(JSON.parse(raw));
   } catch {
     return makeDefaultState();
   }
@@ -143,6 +181,8 @@ function App() {
     () => data.candidates.filter((candidate) => candidate.enabled),
     [data.candidates]
   );
+
+  const candidateRange = useMemo(() => normalizeCandidateRange(data), [data]);
 
   const eventTitle = useMemo(() => {
     const guest = data.guestName.trim() ? `${data.guestName.trim()}さん` : "ゲストさん";
@@ -235,6 +275,14 @@ function App() {
     update({ candidates: generateCandidates(data) });
   };
 
+  const updateBroadcastDate = (broadcastDate) => {
+    update({ broadcastDate, ...getDefaultCandidateRange(broadcastDate) });
+  };
+
+  const resetCandidateRange = () => {
+    update(getDefaultCandidateRange(data.broadcastDate));
+  };
+
   const toggleCandidate = (id) => {
     update({
       candidates: data.candidates.map((candidate) =>
@@ -277,7 +325,7 @@ function App() {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        update({ ...makeDefaultState(), ...parsed });
+        update(normalizeState(parsed));
       } catch {
         alert("JSONを読み込めませんでした。");
       }
@@ -329,7 +377,7 @@ function App() {
               <TextInput value={data.guestName} onChange={(event) => update({ guestName: event.target.value })} placeholder="例: ヴェル13世" />
             </Field>
             <Field label="放送予定日">
-              <input type="date" value={data.broadcastDate} onChange={(event) => update({ broadcastDate: event.target.value })} />
+              <input type="date" value={data.broadcastDate} onChange={(event) => updateBroadcastDate(event.target.value)} />
             </Field>
             <Field label="所要時間">
               <select value={data.durationMinutes} onChange={(event) => update({ durationMinutes: Number(event.target.value) })}>
@@ -338,19 +386,18 @@ function App() {
                 <option value={60}>60分</option>
               </select>
             </Field>
-            <Field label="候補に入れる最初の日">
-              <div className="number-unit">
-                <input type="number" min="1" max="30" value={data.leadStartDays} onChange={(event) => update({ leadStartDays: Number(event.target.value) })} />
-                <span>日前から</span>
-              </div>
+            <Field label="候補開始日">
+              <input type="date" value={data.candidateStartDate || ""} onChange={(event) => update({ candidateStartDate: event.target.value })} />
             </Field>
-            <Field label="候補に入れる最後の日">
-              <div className="number-unit">
-                <input type="number" min="0" max="30" value={data.leadEndDays} onChange={(event) => update({ leadEndDays: Number(event.target.value) })} />
-                <span>日前まで</span>
-              </div>
+            <Field label="候補終了日">
+              <input type="date" value={data.candidateEndDate || ""} onChange={(event) => update({ candidateEndDate: event.target.value })} />
             </Field>
-            <p className="hint wide">例: 7日前から1日前までなら、放送1週間前から前日までを候補にします。</p>
+            <div className="range-actions wide">
+              <p className="hint">候補にしたい日付をそのまま選びます。放送日を変更すると、いったん1週間前から前日までに戻ります。</p>
+              <button className="secondary" onClick={resetCandidateRange}>
+                <CalendarDays size={16} />1週間前から前日にする
+              </button>
+            </div>
             <Field label="打ち合わせ場所" wide>
               <TextInput value={data.meetingPlace} onChange={(event) => update({ meetingPlace: event.target.value })} />
             </Field>
@@ -364,7 +411,7 @@ function App() {
           <div className="time-section">
             <div className="subhead">
               <strong>候補時間</strong>
-              <span>候補範囲: 放送日の{data.leadStartDays}日前から{data.leadEndDays}日前まで</span>
+              <span>候補範囲: {formatJapaneseDate(candidateRange.startDate)}〜{formatJapaneseDate(candidateRange.endDate)}</span>
             </div>
             <div className="time-list">
               {data.timeSlots.map((slot, index) => (
