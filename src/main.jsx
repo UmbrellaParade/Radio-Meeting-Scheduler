@@ -96,6 +96,8 @@ const DEFAULT_DM_PRESETS = [
   }
 ];
 
+const DEFAULT_DM_PRESET_IDS = new Set(DEFAULT_DM_PRESETS.map((preset) => preset.id));
+
 const TEMPLATE_VARIABLES = [
   "{guestName}",
   "{guestNameWithSuffix}",
@@ -475,9 +477,15 @@ function HostApp() {
     const customBlocks = savedBlocks.filter((block) => !DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id));
     return [...defaultBlocks, ...customBlocks];
   }, [data.templateBlocks]);
-  const dmPresets = useMemo(() => [...DEFAULT_DM_PRESETS, ...(data.dmPresets || [])], [data.dmPresets]);
+  const dmPresets = useMemo(() => {
+    const savedPresets = data.dmPresets || [];
+    const savedById = new Map(savedPresets.map((preset) => [preset.id, preset]));
+    const defaultPresets = DEFAULT_DM_PRESETS.map((preset) => ({ ...preset, ...savedById.get(preset.id) }));
+    const customPresets = savedPresets.filter((preset) => !DEFAULT_DM_PRESET_IDS.has(preset.id));
+    return [...defaultPresets, ...customPresets];
+  }, [data.dmPresets]);
   const selectedPreset = dmPresets.find((preset) => preset.id === selectedPresetId) ?? dmPresets[0];
-  const selectedCustomPreset = (data.dmPresets || []).find((preset) => preset.id === selectedPresetId);
+  const selectedSavedPreset = (data.dmPresets || []).find((preset) => preset.id === selectedPresetId);
 
   const memoText = useMemo(
     () =>
@@ -636,7 +644,8 @@ function HostApp() {
   const saveDmPreset = () => {
     const body = String(data.guestDmDraft || "").trim();
     if (!body) return;
-    const name = newPresetName.trim() || `DMプリセット ${(data.dmPresets || []).length + 1}`;
+    const customPresetCount = (data.dmPresets || []).filter((preset) => !DEFAULT_DM_PRESET_IDS.has(preset.id)).length;
+    const name = newPresetName.trim() || `DMプリセット ${customPresetCount + 1}`;
     const preset = {
       id: newId("dm"),
       name,
@@ -648,21 +657,26 @@ function HostApp() {
   };
 
   const overwriteDmPreset = () => {
-    if (!selectedCustomPreset) return;
+    if (!selectedPreset) return;
+    const savedPresets = data.dmPresets || [];
+    const nextPreset = {
+      id: selectedPreset.id,
+      name: newPresetName.trim() || selectedPreset.name,
+      body: data.guestDmDraft
+    };
+    const exists = savedPresets.some((preset) => preset.id === selectedPreset.id);
     update({
-      dmPresets: (data.dmPresets || []).map((preset) =>
-        preset.id === selectedCustomPreset.id
-          ? { ...preset, name: newPresetName.trim() || preset.name, body: data.guestDmDraft }
-          : preset
-      )
+      dmPresets: exists
+        ? savedPresets.map((preset) => (preset.id === selectedPreset.id ? nextPreset : preset))
+        : [nextPreset, ...savedPresets]
     });
     setNewPresetName("");
   };
 
   const removeDmPreset = () => {
-    if (!selectedCustomPreset) return;
-    update({ dmPresets: (data.dmPresets || []).filter((preset) => preset.id !== selectedCustomPreset.id) });
-    setSelectedPresetId("basic");
+    if (!selectedSavedPreset) return;
+    update({ dmPresets: (data.dmPresets || []).filter((preset) => preset.id !== selectedSavedPreset.id) });
+    if (!DEFAULT_DM_PRESET_IDS.has(selectedSavedPreset.id)) setSelectedPresetId("basic");
   };
 
   const exportJson = () => {
@@ -864,10 +878,16 @@ function HostApp() {
               <button className="secondary" onClick={saveDmPreset}>
                 <Plus size={16} />現在のDMを保存
               </button>
-              <button className="secondary" onClick={overwriteDmPreset} disabled={!selectedCustomPreset}>
+              <button className="secondary" onClick={overwriteDmPreset} disabled={!selectedPreset}>
                 <Check size={16} />選択プリセットを上書き
               </button>
-              <button className="icon-danger" onClick={removeDmPreset} disabled={!selectedCustomPreset} aria-label="DMプリセットを削除">
+              <button
+                className="icon-danger"
+                onClick={removeDmPreset}
+                disabled={!selectedSavedPreset}
+                aria-label={DEFAULT_DM_PRESET_IDS.has(selectedPresetId) ? "DMプリセットを初期状態に戻す" : "DMプリセットを削除"}
+                title={DEFAULT_DM_PRESET_IDS.has(selectedPresetId) ? "初期状態に戻す" : "削除"}
+              >
                 <Trash2 size={16} />
               </button>
             </div>
