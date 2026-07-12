@@ -399,13 +399,18 @@ textarea {
 
 .block-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 38px;
+  grid-template-columns: minmax(0, 1fr) auto 38px 38px;
   gap: 8px;
   align-items: center;
   padding: 10px;
   border: 1px solid #e0d7c8;
   border-radius: 8px;
   background: #fffdf8;
+}
+
+.block-row.editing {
+  grid-template-columns: minmax(0, 1fr) auto 38px;
+  align-items: start;
 }
 
 .block-row div {
@@ -423,6 +428,15 @@ textarea {
 
 .block-row small {
   color: #756d7d;
+}
+
+.block-edit-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.block-edit-fields textarea {
+  min-height: 132px;
 }
 
 .block-form textarea {

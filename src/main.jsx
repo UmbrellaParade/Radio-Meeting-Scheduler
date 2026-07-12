@@ -7,11 +7,13 @@ import {
   Download,
   ExternalLink,
   MessageSquareText,
+  Pencil,
   Plus,
   RefreshCcw,
   Share2,
   Trash2,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import "./styles.css";
 import {
@@ -67,6 +69,8 @@ const DEFAULT_TEMPLATE_BLOCKS = [
     ].join("\n")
   }
 ];
+
+const DEFAULT_TEMPLATE_BLOCK_IDS = new Set(DEFAULT_TEMPLATE_BLOCKS.map((block) => block.id));
 
 const DEFAULT_DM_PRESETS = [
   {
@@ -433,6 +437,9 @@ function HostApp() {
   const [newSlot, setNewSlot] = useState("19:30");
   const [newBlockName, setNewBlockName] = useState("");
   const [newBlockBody, setNewBlockBody] = useState("");
+  const [editingBlockId, setEditingBlockId] = useState("");
+  const [editingBlockName, setEditingBlockName] = useState("");
+  const [editingBlockBody, setEditingBlockBody] = useState("");
   const [newPresetName, setNewPresetName] = useState("");
   const [selectedPresetId, setSelectedPresetId] = useState("basic");
 
@@ -461,7 +468,13 @@ function HostApp() {
     [enabledCandidates]
   );
 
-  const templateBlocks = useMemo(() => [...DEFAULT_TEMPLATE_BLOCKS, ...(data.templateBlocks || [])], [data.templateBlocks]);
+  const templateBlocks = useMemo(() => {
+    const savedBlocks = data.templateBlocks || [];
+    const savedById = new Map(savedBlocks.map((block) => [block.id, block]));
+    const defaultBlocks = DEFAULT_TEMPLATE_BLOCKS.map((block) => ({ ...block, ...savedById.get(block.id) }));
+    const customBlocks = savedBlocks.filter((block) => !DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id));
+    return [...defaultBlocks, ...customBlocks];
+  }, [data.templateBlocks]);
   const dmPresets = useMemo(() => [...DEFAULT_DM_PRESETS, ...(data.dmPresets || [])], [data.dmPresets]);
   const selectedPreset = dmPresets.find((preset) => preset.id === selectedPresetId) ?? dmPresets[0];
   const selectedCustomPreset = (data.dmPresets || []).find((preset) => preset.id === selectedPresetId);
@@ -582,8 +595,36 @@ function HostApp() {
     setNewBlockBody("");
   };
 
+  const startEditTemplateBlock = (block) => {
+    setEditingBlockId(block.id);
+    setEditingBlockName(block.name);
+    setEditingBlockBody(block.body);
+  };
+
+  const cancelEditTemplateBlock = () => {
+    setEditingBlockId("");
+    setEditingBlockName("");
+    setEditingBlockBody("");
+  };
+
+  const saveEditedTemplateBlock = () => {
+    const name = editingBlockName.trim();
+    const body = editingBlockBody.trim();
+    if (!editingBlockId || !name || !body) return;
+    const savedBlocks = data.templateBlocks || [];
+    const editedBlock = { id: editingBlockId, name, body };
+    const exists = savedBlocks.some((block) => block.id === editingBlockId);
+    update({
+      templateBlocks: exists
+        ? savedBlocks.map((block) => (block.id === editingBlockId ? editedBlock : block))
+        : [...savedBlocks, editedBlock]
+    });
+    cancelEditTemplateBlock();
+  };
+
   const removeTemplateBlock = (id) => {
     update({ templateBlocks: (data.templateBlocks || []).filter((block) => block.id !== id) });
+    if (editingBlockId === id) cancelEditTemplateBlock();
   };
 
   const applyDmPreset = (preset) => {
@@ -838,17 +879,44 @@ function HostApp() {
             </div>
             <div className="block-list">
               {templateBlocks.map((block) => {
-                const custom = (data.templateBlocks || []).some((item) => item.id === block.id);
+                const saved = (data.templateBlocks || []).some((item) => item.id === block.id);
+                const editing = editingBlockId === block.id;
                 return (
-                  <div className="block-row" key={block.id}>
-                    <div>
-                      <strong>{block.name}</strong>
-                      <small>{block.body.split("\n")[0]}</small>
-                    </div>
-                    <button className="secondary" onClick={() => insertBlock(block)}>挿入</button>
-                    <button className="icon-danger" onClick={() => removeTemplateBlock(block.id)} disabled={!custom} aria-label="文章ブロックを削除">
-                      <Trash2 size={16} />
-                    </button>
+                  <div className={editing ? "block-row editing" : "block-row"} key={block.id}>
+                    {editing ? (
+                      <>
+                        <div className="block-edit-fields">
+                          <TextInput value={editingBlockName} onChange={(event) => setEditingBlockName(event.target.value)} />
+                          <textarea value={editingBlockBody} onChange={(event) => setEditingBlockBody(event.target.value)} />
+                        </div>
+                        <button className="secondary" onClick={saveEditedTemplateBlock} disabled={!editingBlockName.trim() || !editingBlockBody.trim()}>
+                          <Check size={16} />保存
+                        </button>
+                        <button className="ghost" onClick={cancelEditTemplateBlock} aria-label="文章ブロックの編集をキャンセル">
+                          <X size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <strong>{block.name}</strong>
+                          <small>{block.body.split("\n")[0]}</small>
+                        </div>
+                        <button className="secondary" onClick={() => insertBlock(block)}>挿入</button>
+                        <button className="ghost" onClick={() => startEditTemplateBlock(block)} aria-label="文章ブロックを編集">
+                          <Pencil size={16} />
+                        </button>
+                        <button
+                          className="icon-danger"
+                          onClick={() => removeTemplateBlock(block.id)}
+                          disabled={!saved}
+                          aria-label={DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id) ? "文章ブロックを初期状態に戻す" : "文章ブロックを削除"}
+                          title={DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id) ? "初期状態に戻す" : "削除"}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 );
               })}
