@@ -28,6 +28,10 @@ export function createEvent({ title, memo, candidates }) {
   return post({ action: "create", title, memo, candidates });
 }
 
+export function updateEvent({ id, adminKey, title, memo, candidates }) {
+  return post({ action: "update", id, adminKey, title, memo, candidates });
+}
+
 export function submitAnswer({ id, name, answers, comment }) {
   return post({ action: "answer", id, name, answers, comment });
 }

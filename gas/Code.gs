@@ -153,6 +153,7 @@ function doPost(e) {
     }
     const action = String(body.action || "");
     if (action === "create") return handleCreate_(body);
+    if (action === "update") return handleUpdate_(body);
     if (action === "answer") return handleAnswer_(body);
     if (action === "decide") return handleDecide_(body);
     return jsonOutput_({ ok: false, error: "不明なactionです: " + action });
@@ -190,6 +191,39 @@ function handleCreate_(body) {
     new Date().toISOString()
   ]);
   return jsonOutput_({ ok: true, id: id, adminKey: adminKey });
+}
+
+function handleUpdate_(body) {
+  const id = String(body.id || "").trim();
+  const adminKey = String(body.adminKey || "");
+  const candidates = Array.isArray(body.candidates) ? body.candidates : [];
+  if (candidates.length === 0) return jsonOutput_({ ok: false, error: "候補日時がありません" });
+
+  const ss = getSpreadsheet_();
+  const found = findEvent_(ss, id);
+  if (!found) return jsonOutput_({ ok: false, error: "イベントが見つかりません" });
+  if (String(found.row.adminKey) !== adminKey) {
+    return jsonOutput_({ ok: false, error: "管理キーが一致しません" });
+  }
+
+  const cleanCandidates = candidates.slice(0, 200).map(function (candidate) {
+    return {
+      id: String(candidate.id || ""),
+      date: String(candidate.date || ""),
+      start: String(candidate.start || ""),
+      end: String(candidate.end || "")
+    };
+  });
+
+  const title = String(body.title || "").trim();
+  if (title) {
+    found.sheet.getRange(found.row.rowIndex, EVENT_HEADERS.indexOf("title") + 1).setValue(title);
+  }
+  found.sheet.getRange(found.row.rowIndex, EVENT_HEADERS.indexOf("memo") + 1).setValue(String(body.memo || ""));
+  found.sheet
+    .getRange(found.row.rowIndex, EVENT_HEADERS.indexOf("candidatesJson") + 1)
+    .setValue(JSON.stringify(cleanCandidates));
+  return jsonOutput_({ ok: true });
 }
 
 function handleAnswer_(body) {

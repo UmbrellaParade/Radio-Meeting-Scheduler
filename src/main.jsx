@@ -22,7 +22,7 @@ import {
   formatJapaneseDate,
   toDate
 } from "./lib.js";
-import { apiConfigured, createEvent, decideEvent, fetchEvent } from "./api.js";
+import { apiConfigured, createEvent, decideEvent, fetchEvent, updateEvent } from "./api.js";
 import GuestApp from "./guest.jsx";
 import ResponseTable from "./ResponseTable.jsx";
 
@@ -153,6 +153,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
   const [error, setError] = useState("");
   const [live, setLive] = useState(null); // {event, responses}
   const [decideTarget, setDecideTarget] = useState("");
+  const [updated, setUpdated] = useState(false);
 
   const shareUrl = data.share?.id ? shareUrlFor(data.share.id) : "";
 
@@ -190,6 +191,32 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
       setLive({ event: result.event, responses: result.responses || [] });
     } catch (err) {
       setError(err.message || "取得に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateShare = async () => {
+    if (!data.share?.id) return;
+    if (enabledCandidates.length === 0) {
+      alert("候補日時がありません。先に候補日を生成してください。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setUpdated(false);
+    try {
+      await updateEvent({
+        id: data.share.id,
+        adminKey: data.share.adminKey,
+        title: eventTitle,
+        memo: memoText,
+        candidates: enabledCandidates.map(({ id, date, start, end }) => ({ id, date, start, end }))
+      });
+      setUpdated(true);
+      await refresh();
+    } catch (err) {
+      setError(err.message || "更新に失敗しました");
     } finally {
       setBusy(false);
     }
@@ -251,10 +278,17 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
               <RefreshCcw size={16} />
               {busy ? "取得中..." : "回答状況を更新"}
             </button>
-            <button className="ghost" onClick={createShare} disabled={busy} title="候補を変えた場合など">
+            <button className="secondary" onClick={updateShare} disabled={busy} title="URLはそのまま、候補日時を今の内容に置き換えます">
+              <CalendarDays size={16} />
+              {updated ? "候補を更新しました！" : "今の候補で共有ページを更新"}
+            </button>
+            <button className="ghost" onClick={createShare} disabled={busy} title="URLを新しくして最初から作り直します">
               <Share2 size={16} />作り直す
             </button>
           </div>
+          <p className="hint">
+            日付や時間を変えたら「今の候補で共有ページを更新」。URLは変わらず、届いている回答も残ります。
+          </p>
 
           {live && (
             <>
