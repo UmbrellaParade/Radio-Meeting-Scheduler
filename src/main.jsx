@@ -13,6 +13,7 @@ import {
   Radio,
   RefreshCcw,
   Share2,
+  Settings,
   Trash2,
   Upload,
   X
@@ -31,6 +32,9 @@ import {
 import { apiConfigured, createEvent, decideEvent, fetchEvent, updateEvent } from "./api.js";
 import GuestApp from "./guest.jsx";
 import ResponseTable from "./ResponseTable.jsx";
+import { initialMode, shareUrlFor, startEmbedBridge } from "./embedding.js";
+import StudioSettings, { StudioLinks } from "./StudioSettings.jsx";
+import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection } from "./studios.js";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
 const ACTIVE_MODE_KEY = "meeting-scheduler:active-mode";
@@ -86,7 +90,7 @@ const BAND_TEMPLATE_BLOCKS = [
 ];
 
 const BAND_TEMPLATE_BLOCK_IDS = new Set(BAND_TEMPLATE_BLOCKS.map((block) => block.id));
-const BAND_TEMPLATE_VARIABLES = ["{studioDate}", "{durationHours}", "{studioPlace}", "{scheduleUrl}", "{candidateList}"];
+const BAND_TEMPLATE_VARIABLES = ["{studioDate}", "{durationHours}", "{studioPlace}", "{studioUrl}", "{studioAccessUrl}", "{scheduleUrl}", "{candidateList}"];
 
 const DEFAULT_DM_TEMPLATE = [
   "こんばんは！{guestNameWithSuffix}",
@@ -240,6 +244,10 @@ function makeDefaultState(mode = "radio") {
     share: null,
     decidedAt: "",
     meetingPlace: isBand ? "" : "オンライン（Discord / Zoomなど）",
+    studios: [],
+    studioId: "",
+    studioUrl: "",
+    studioAccessUrl: "",
     meetingNotes: "",
     guestDmDraft: isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE,
     templateBlocks: [],
@@ -271,6 +279,9 @@ function normalizeState(input = {}, mode = "radio") {
   if (typeof next.guestDmDraft !== "string") next.guestDmDraft = base.guestDmDraft;
   if (!Array.isArray(next.templateBlocks)) next.templateBlocks = [];
   if (!Array.isArray(next.dmPresets)) next.dmPresets = [];
+  next.studios = normalizeStudios(next.studios);
+  next.studioUrl = safeWebUrl(next.studioUrl);
+  next.studioAccessUrl = safeWebUrl(next.studioAccessUrl);
   return next;
 }
 
@@ -282,10 +293,6 @@ function loadState(mode) {
   } catch {
     return makeDefaultState(mode);
   }
-}
-
-function shareUrlFor(shareId, mode) {
-  return `${window.location.origin}${window.location.pathname}?e=${encodeURIComponent(shareId)}${mode === "band" ? "&mode=band" : ""}`;
 }
 
 function copyText(text, label, setCopied) {
@@ -306,6 +313,8 @@ function renderTemplate(template, data, candidateLines) {
     durationHours: String(Number(data.durationMinutes || 180) / 60),
     studioDate: formatJapaneseDate(data.broadcastDate) || "未定",
     studioPlace: data.meetingPlace || "未定",
+    studioUrl: safeWebUrl(data.studioUrl),
+    studioAccessUrl: safeWebUrl(data.studioAccessUrl),
     meetingPlace: data.meetingPlace || "オンライン",
     scheduleUrl: data.scheduleUrl || "（共有ページを作成するとURLが入ります）",
     candidateList: candidateLines.length ? candidateLines.join("\n") : "（候補日時を生成してください）"
@@ -502,7 +511,32 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
   );
 }
 
-function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
+const WORKSPACE_TABS = [
+  { id: "band", label: "バンド", Icon: Guitar },
+  { id: "radio", label: "ラジオ", Icon: Radio },
+  { id: "settings", label: "設定", Icon: Settings }
+];
+
+function ModeTabs({ mode, onModeChange }) {
+  return <div className="mode-tabs" role="tablist" aria-label="スケジュールと設定">
+    {WORKSPACE_TABS.map(({ id, label, Icon }, index) => <button
+      key={id} id={`mode-tab-${id}`} role="tab" aria-selected={mode === id}
+      aria-controls="schedule-workspace" tabIndex={mode === id ? 0 : -1}
+      onClick={() => onModeChange(id)}
+      onKeyDown={(event) => {
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? WORKSPACE_TABS.length - 1 :
+          event.key === "ArrowRight" ? (index + 1) % WORKSPACE_TABS.length :
+          event.key === "ArrowLeft" ? (index + WORKSPACE_TABS.length - 1) % WORKSPACE_TABS.length : -1;
+        if (nextIndex < 0) return;
+        event.preventDefault();
+        const nextMode = WORKSPACE_TABS[nextIndex].id;
+        onModeChange(nextMode);
+        requestAnimationFrame(() => document.getElementById(`mode-tab-${nextMode}`)?.focus());
+      }}><Icon size={20} />{label}</button>)}
+  </div>;
+}
+
+function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studios }) {
   const isBand = mode === "band";
   const defaultTemplate = isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE;
   const defaultBlocks = isBand ? BAND_TEMPLATE_BLOCKS : DEFAULT_TEMPLATE_BLOCKS;
@@ -558,13 +592,14 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
       [
         isBand ? `スタジオリハの所要時間は${data.durationMinutes / 60}時間です。` : `所要時間は${data.durationMinutes || 30}分ほどです。`,
         `${isBand ? "スタジオ場所" : "場所"}: ${data.meetingPlace || (isBand ? "未定" : "オンライン")}`,
+        ...(isBand ? studioLinkLines(data) : []),
         isBand ? "次のスタジオリハ、みんなが集まれる日を教えてください。途中参加や希望のスタジオがあればコメントにお願いします。" : "番組の流れ、紹介楽曲、記事掲載内容、NG事項の確認をします。",
         "参加できる日時に○、難しい日時に×、条件つきなら△でお願いします。",
         data.broadcastDate ? `${isBand ? "スタジオ予定日（仮）" : "放送予定日"}: ${formatJapaneseDate(data.broadcastDate)}` : ""
       ]
         .filter(Boolean)
         .join("\n"),
-    [data.broadcastDate, data.durationMinutes, data.meetingPlace, isBand]
+    [data.broadcastDate, data.durationMinutes, data.meetingPlace, data.studioUrl, data.studioAccessUrl, isBand]
   );
 
   const shareUrl = data.share?.id ? shareUrlFor(data.share.id, mode) : "";
@@ -604,7 +639,11 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
     [candidateLines, data.guestDmDraft, eventTitle, memoText, scheduleUrl, templateData, isBand]
   );
 
-  const guestDm = useMemo(() => renderTemplate(data.guestDmDraft, templateData, candidateLines), [candidateLines, data.guestDmDraft, templateData]);
+  const guestDm = useMemo(() => {
+    const body = renderTemplate(data.guestDmDraft, templateData, candidateLines);
+    const links = isBand ? studioLinkLines(data).filter((line) => !body.includes(line.slice(line.indexOf(": ") + 2))) : [];
+    return [body, links.join("\n")].filter(Boolean).join("\n\n");
+  }, [candidateLines, data, templateData, isBand]);
   const candidateCopyText = useMemo(() => candidateLines.join("\n") || "候補日時がまだありません。", [candidateLines]);
 
   const regenerate = () => {
@@ -777,8 +816,8 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid backup");
         const importedMode = parsed.mode === "band" ? "band" : "radio";
         const next = normalizeState(parsed, importedMode);
-        if (importedMode === mode) update(next);
-        else onImport(next, importedMode);
+        if (!Array.isArray(parsed.studios)) delete next.studios;
+        onImport(next, importedMode);
       } catch {
         alert("JSONを読み込めませんでした。");
       }
@@ -789,7 +828,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
 
   const reset = () => {
     if (!confirm(`${isBand ? "バンド" : "ラジオ"}の入力内容を初期状態に戻しますか？`)) return;
-    update(makeDefaultState(mode));
+    update({ ...makeDefaultState(mode), studios: data.studios });
   };
 
   return (
@@ -813,32 +852,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
         </div>
       </header>
 
-      <div className="mode-tabs" role="tablist" aria-label="スケジュールの種類">
-        {[
-          { id: "band", label: "バンド", Icon: Guitar },
-          { id: "radio", label: "ラジオ", Icon: Radio }
-        ].map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            id={`mode-tab-${id}`}
-            role="tab"
-            aria-selected={mode === id}
-            aria-controls="schedule-workspace"
-            tabIndex={mode === id ? 0 : -1}
-            onClick={() => onModeChange(id)}
-            onKeyDown={(event) => {
-              const nextMode = event.key === "Home" ? "band" : event.key === "End" ? "radio" :
-                ["ArrowLeft", "ArrowRight"].includes(event.key) ? (mode === "band" ? "radio" : "band") : null;
-              if (!nextMode) return;
-              event.preventDefault();
-              onModeChange(nextMode);
-              requestAnimationFrame(() => document.getElementById(`mode-tab-${nextMode}`)?.focus());
-            }}
-          >
-            <Icon size={20} />{label}
-          </button>
-        ))}
-      </div>
+      <ModeTabs mode={mode} onModeChange={onModeChange} />
 
       <div id="schedule-workspace" role="tabpanel" aria-labelledby={`mode-tab-${mode}`}>
       <section className="layout">
@@ -886,9 +900,16 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
                 <CalendarDays size={16} />{isBand ? "スタジオ予定日から1週間" : "1週間前から前日にする"}
               </button>
             </div>
+            {isBand && <Field label="登録済みスタジオ" wide>
+              <select value={studios.some((studio) => studio.id === data.studioId) ? data.studioId : ""} onChange={(event) => update(studioSelection(studios.find((studio) => studio.id === event.target.value)))}>
+                <option value="">未定・直接入力</option>
+                {studios.map((studio) => <option key={studio.id} value={studio.id}>{studio.name}</option>)}
+              </select>
+            </Field>}
             <Field label={isBand ? "スタジオ場所" : "打ち合わせ場所"} wide>
-              <TextInput value={data.meetingPlace} onChange={(event) => update({ meetingPlace: event.target.value })} placeholder={isBand ? "スタジオ名・住所（未定なら空欄）" : undefined} />
+              <TextInput value={data.meetingPlace} readOnly={isBand && studios.some((studio) => studio.id === data.studioId)} onChange={(event) => update(isBand ? { ...studioSelection(null), meetingPlace: event.target.value } : { meetingPlace: event.target.value })} placeholder={isBand ? "スタジオ名・住所（未定なら空欄）" : undefined} />
             </Field>
+            {isBand && <div className="wide"><StudioLinks url={data.studioUrl} accessUrl={data.studioAccessUrl} /></div>}
           </div>
 
           <label className="inline-check">
@@ -1120,12 +1141,16 @@ function HostApp() {
   const [workspaces, setWorkspaces] = useState(() => ({ radio: loadState("radio"), band: loadState("band") }));
   const [mode, setMode] = useState(() => {
     try {
-      return localStorage.getItem(ACTIVE_MODE_KEY) === "band" ? "band" : "radio";
+      const savedMode = localStorage.getItem(ACTIVE_MODE_KEY);
+      return savedMode === "band" || savedMode === "radio" ? savedMode : initialMode();
     } catch {
-      return "radio";
+      return initialMode();
     }
   });
+  const [showSettings, setShowSettings] = useState(false);
   const changeMode = (nextMode) => {
+    if (nextMode === "settings") { setShowSettings(true); return; }
+    setShowSettings(false);
     localStorage.setItem(ACTIVE_MODE_KEY, nextMode);
     setMode(nextMode);
   };
@@ -1141,6 +1166,22 @@ function HostApp() {
     updateWorkspace(importedMode, data);
     changeMode(importedMode);
   };
+  if (showSettings) return <main className="app-shell">
+    <header className="app-header"><div><span className="eyebrow">Umbrella Parade Toolkit</span><h1>設定</h1></div></header>
+    <ModeTabs mode="settings" onModeChange={changeMode} />
+    <div id="schedule-workspace" role="tabpanel" aria-labelledby="mode-tab-settings">
+      <StudioSettings studios={workspaces.band.studios} onSave={(studio) => {
+        const studios = workspaces.band.studios;
+        updateWorkspace("band", {
+          studios: studios.some((item) => item.id === studio.id) ? studios.map((item) => item.id === studio.id ? studio : item) : [...studios, studio],
+          ...(workspaces.band.studioId === studio.id ? studioSelection(studio) : {})
+        });
+      }} onDelete={(id) => updateWorkspace("band", {
+        studios: workspaces.band.studios.filter((studio) => studio.id !== id),
+        ...(workspaces.band.studioId === id ? { studioId: "" } : {})
+      })} />
+    </div>
+  </main>;
   return (
     <SchedulerWorkspace
       key={mode}
@@ -1149,6 +1190,7 @@ function HostApp() {
       update={(patch) => updateWorkspace(mode, patch)}
       onModeChange={changeMode}
       onImport={importMode}
+      studios={workspaces.band.studios}
     />
   );
 }
@@ -1161,3 +1203,4 @@ function Root() {
 }
 
 createRoot(document.getElementById("root")).render(<Root />);
+startEmbedBridge();

@@ -3,6 +3,7 @@ import { Check, RefreshCcw, Send } from "lucide-react";
 import { apiConfigured, fetchEvent, submitAnswer } from "./api.js";
 import { formatCandidateLabel } from "./lib.js";
 import ResponseTable from "./ResponseTable.jsx";
+import { safeWebUrl } from "./studios.js";
 
 const GUEST_NAME_KEY = "radio-meeting-scheduler:guest-name";
 const GUEST_HEADER_IMAGE = `${import.meta.env.BASE_URL}sunopa-header.png`;
@@ -26,7 +27,9 @@ function GuestHeader({ title, memo, mode }) {
       <div>
         <span className="eyebrow">{isBand ? "Umbrella Parade / Studio Rehearsal" : "Umbrella Parade Toolkit"}</span>
         <h1>{title}</h1>
-        {memo && <p className="event-memo">{memo}</p>}
+        {memo && <p className="event-memo">{memo.split(/(https?:\/\/[^\s]+)/g).map((part, index) =>
+          safeWebUrl(part) ? <a key={index} href={safeWebUrl(part)} target="_blank" rel="noopener noreferrer">{part}</a> : part
+        )}</p>}
       </div>
     </header>
   );

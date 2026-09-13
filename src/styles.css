@@ -12,7 +12,7 @@
 
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 0;
 }
 
 button,
@@ -98,7 +98,7 @@ h2 {
 
 .mode-tabs {
   display: flex;
-  gap: 24px;
+  gap: 8px;
   margin-top: 8px;
   border-bottom: 1px solid #d8cfbf;
 }
@@ -108,7 +108,7 @@ h2 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-width: 116px;
+  min-width: 0;
   min-height: 52px;
   padding: 12px 16px;
   border-radius: 0;
@@ -129,6 +129,26 @@ h2 {
 .mode-tabs button:focus-visible {
   outline: 2px solid #1f7a73;
   outline-offset: -2px;
+}
+
+.studio-settings { margin-top: 24px; max-width: 900px; }
+.studio-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.studio-form-actions, .studio-form .wide, .form-grid > .wide { grid-column: 1 / -1; }
+.studio-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.studio-list { margin-top: 24px; border-top: 1px solid #d8cfbf; }
+.studio-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 0; border-bottom: 1px solid #d8cfbf; }
+.studio-row > div:first-child { min-width: 0; }
+.studio-row h3 { font-size: 16px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.studio-row .inline-actions { flex-shrink: 0; }
+.studio-links { display: flex; gap: 16px; flex-wrap: wrap; }
+.studio-links a { display: inline-flex; gap: 6px; align-items: center; color: #175b56; font-weight: 700; font-size: 14px; }
+.studio-links svg { flex-shrink: 0; }
+.studio-save-status { color: #175b56; margin-top: 12px; }
+.event-memo a { color: #175b56; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .studio-form { grid-template-columns: minmax(0, 1fr); }
+  .mode-tabs { gap: 0; }
+  .mode-tabs button { flex: 1; padding: 12px 8px; }
 }
 
 .primary,
@@ -266,6 +286,7 @@ input,
 select,
 textarea {
   width: 100%;
+  min-width: 0;
   min-height: 38px;
   border: 1px solid #cfc4b4;
   border-radius: 8px;
@@ -307,7 +328,7 @@ textarea {
 
 .time-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
 
