@@ -16,7 +16,8 @@ const ANSWER_OPTIONS = [
 ];
 
 function GuestHeader({ title, memo, mode }) {
-  const isBand = mode === "band";
+  const isBand = mode === "band" || mode === "live";
+  const isLive = mode === "live";
   return (
     <header className="app-header guest-header">
       <img
@@ -25,7 +26,7 @@ function GuestHeader({ title, memo, mode }) {
         alt={isBand ? "Umbrella Parade" : "Sunoパ！ presented by Umbrella Parade"}
       />
       <div>
-        <span className="eyebrow">{isBand ? "Umbrella Parade / Studio Rehearsal" : "Umbrella Parade Toolkit"}</span>
+        <span className="eyebrow">{isLive ? "Umbrella Parade / Live Schedule" : isBand ? "Umbrella Parade / Studio Rehearsal" : "Umbrella Parade Toolkit"}</span>
         <h1>{title}</h1>
         {memo && <p className="event-memo">{memo.split(/(https?:\/\/[^\s]+)/g).map((part, index) =>
           safeWebUrl(part) ? <a key={index} href={safeWebUrl(part)} target="_blank" rel="noopener noreferrer">{part}</a> : part
@@ -45,8 +46,12 @@ export default function GuestApp({ eventId, mode = "radio" }) {
   const [comment, setComment] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
-  const pageMode = mode === "band" || event?.title === "バンド スタジオリハ" ? "band" : "radio";
-  const isBand = pageMode === "band";
+  const pageMode = mode === "live" || event?.title === "バンド ライブ日程"
+    ? "live"
+    : mode === "band" || event?.title === "バンド スタジオリハ" ? "band" : "radio";
+  const isBand = pageMode === "band" || pageMode === "live";
+  const isLive = pageMode === "live";
+  const fallbackTitle = isLive ? "バンド ライブ日程" : isBand ? "バンド スタジオリハ" : "日程調整";
 
   const load = async () => {
     setLoading(true);
@@ -123,7 +128,7 @@ export default function GuestApp({ eventId, mode = "radio" }) {
   if (loading) {
     return (
       <main className="app-shell guest-shell">
-        <GuestHeader title={isBand ? "バンド スタジオリハ" : "日程調整"} mode={pageMode} />
+        <GuestHeader title={fallbackTitle} mode={pageMode} />
         <p className="empty">読み込み中...</p>
       </main>
     );
@@ -132,7 +137,7 @@ export default function GuestApp({ eventId, mode = "radio" }) {
   if (!event) {
     return (
       <main className="app-shell guest-shell">
-        <GuestHeader title={isBand ? "バンド スタジオリハ" : "日程調整"} mode={pageMode} />
+        <GuestHeader title={fallbackTitle} mode={pageMode} />
         <p className="error-banner">{error || "イベントが見つかりませんでした。"}</p>
       </main>
     );
@@ -145,7 +150,7 @@ export default function GuestApp({ eventId, mode = "radio" }) {
       {event.decidedAt && (
         <div className="decided-banner">
           <Check size={18} />
-          {isBand ? "スタジオリハの日程が決まりました:" : "日程が決定しました:"} <strong>{event.decidedAt}</strong>
+          {isLive ? "ライブ日程が決まりました:" : isBand ? "スタジオリハの日程が決まりました:" : "日程が決定しました:"} <strong>{event.decidedAt}</strong>
         </div>
       )}
 
@@ -153,7 +158,7 @@ export default function GuestApp({ eventId, mode = "radio" }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>{isBand ? "スタジオリハの出欠" : "出欠を入力"}</h2>
+          <h2>{isLive ? "ライブの出欠" : isBand ? "スタジオリハの出欠" : "出欠を入力"}</h2>
           <span>
             {answeredCount}/{event.candidates.length}件 入力済み
           </span>
@@ -204,11 +209,11 @@ export default function GuestApp({ eventId, mode = "radio" }) {
         </div>
 
         <label className="field wide">
-          <span>{isBand ? "参加時間・スタジオの希望（任意）" : "コメント（任意）"}</span>
+          <span>{isLive ? "参加可否の補足（任意）" : isBand ? "参加時間・スタジオの希望（任意）" : "コメント（任意）"}</span>
           <textarea
             value={comment}
             onChange={(commentEvent) => setComment(commentEvent.target.value)}
-            placeholder={isBand ? "例: 19時から参加できます。駅近のスタジオ希望です。" : "例: 21時以降なら確実に参加できます"}
+            placeholder={isLive ? "例: 出演できます。入り時間だけ後で相談したいです。" : isBand ? "例: 19時から参加できます。駅近のスタジオ希望です。" : "例: 21時以降なら確実に参加できます"}
           />
         </label>
 
@@ -220,7 +225,7 @@ export default function GuestApp({ eventId, mode = "radio" }) {
           {sent && (
             <span className="sent-note">
               <Check size={16} />
-              {isBand ? "スタジオリハの出欠を受け付けました！" : "回答を受け付けました！"}
+              {isLive ? "ライブの出欠を受け付けました！" : isBand ? "スタジオリハの出欠を受け付けました！" : "回答を受け付けました！"}
             </span>
           )}
         </div>
@@ -235,7 +240,7 @@ export default function GuestApp({ eventId, mode = "radio" }) {
             更新
           </button>
         </div>
-        <ResponseTable candidates={event.candidates} responses={responses} decidedCandidateId="" />
+        <ResponseTable candidates={event.candidates} responses={responses} decidedCandidateId="" candidateHeading={isLive ? "候補日" : "候補日時"} />
       </section>
     </main>
   );

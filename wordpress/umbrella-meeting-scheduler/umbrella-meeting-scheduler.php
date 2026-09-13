@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Umbrella Meeting Scheduler
  * Plugin URI: https://github.com/UmbrellaParade/Radio-Meeting-Scheduler
- * Description: バンドのスタジオリハとラジオの打ち合わせを調整するツールです。共有ページ、出欠回答、連絡文面に対応します。
- * Version: 1.0.3
+ * Description: バンドのスタジオリハ・ライブ出演日とラジオの打ち合わせを調整するツールです。共有ページ、出欠回答、連絡文面に対応します。
+ * Version: 1.1.0
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Author: Umbrella Parade
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('UMS_VERSION', '1.0.3');
+define('UMS_VERSION', '1.1.0');
 define('UMS_PAGE_TEMPLATE', 'umbrella-meeting-scheduler-fullwidth');
 
 function ums_enqueue_assets() {
@@ -78,7 +78,7 @@ function ums_admin_page() {
     ?>
     <div class="wrap">
         <h1>日程調整</h1>
-        <p>バンドのスタジオリハとラジオの打ち合わせに使える日程調整ツールです。</p>
+        <p>バンドのスタジオリハ・ライブ出演日とラジオの打ち合わせに使える日程調整ツールです。</p>
         <?php if ($page && $page->post_status !== 'trash') : ?>
             <p><a class="button button-primary" href="<?php echo esc_url(get_permalink($page)); ?>" target="_blank" rel="noopener">日程調整ページを開く</a>
             <a class="button" href="<?php echo esc_url(get_edit_post_link($page->ID)); ?>">固定ページを編集</a></p>

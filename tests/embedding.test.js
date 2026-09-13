@@ -13,11 +13,13 @@ test('standalone radio links retain their existing format', () => {
   setLocation('https://example.com/Radio-Meeting-Scheduler/');
   assert.equal(shareUrlFor('event123', 'radio'), 'https://example.com/Radio-Meeting-Scheduler/?e=event123');
   assert.equal(shareUrlFor('event123', 'band'), 'https://example.com/Radio-Meeting-Scheduler/?e=event123&mode=band');
+  assert.equal(shareUrlFor('event123', 'live'), 'https://example.com/Radio-Meeting-Scheduler/?e=event123&mode=live');
 });
 
 test('WordPress shares use the public page instead of the plugin asset path', () => {
   setLocation('https://example.com/wp-content/plugins/scheduler/app/index.html?embed=wordpress', 'https://example.com/meeting-scheduler/');
   assert.equal(shareUrlFor('event123', 'band'), 'https://example.com/meeting-scheduler/?e=event123&mode=band');
+  assert.equal(shareUrlFor('event123', 'live'), 'https://example.com/meeting-scheduler/?e=event123&mode=live');
 });
 
 test('plain WordPress permalinks keep page_id and replace event parameters', () => {

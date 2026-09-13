@@ -32,9 +32,14 @@ export function studioSelection(studio) {
   };
 }
 
-export function studioLinkLines(data) {
+export function venueLinkLines(data, type = "studio") {
+  const venueName = type === "livehouse" ? "ライブハウス" : "スタジオ";
   return [
-    safeWebUrl(data.studioUrl) ? `スタジオ公式サイト: ${safeWebUrl(data.studioUrl)}` : "",
+    safeWebUrl(data.studioUrl) ? `${venueName}公式サイト: ${safeWebUrl(data.studioUrl)}` : "",
     safeWebUrl(data.studioAccessUrl) ? `アクセス・地図: ${safeWebUrl(data.studioAccessUrl)}` : ""
   ].filter(Boolean);
+}
+
+export function studioLinkLines(data) {
+  return venueLinkLines(data, "studio");
 }

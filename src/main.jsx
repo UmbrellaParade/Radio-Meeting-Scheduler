@@ -7,7 +7,9 @@ import {
   Download,
   ExternalLink,
   Guitar,
+  MapPin,
   MessageSquareText,
+  Music2,
   Pencil,
   Plus,
   Radio,
@@ -33,16 +35,23 @@ import GuestApp from "./guest.jsx";
 import ResponseTable from "./ResponseTable.jsx";
 import { initialMode, shareUrlFor, startEmbedBridge } from "./embedding.js";
 import StudioSettings, { StudioLinks } from "./StudioSettings.jsx";
-import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection } from "./studios.js";
+import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection, venueLinkLines } from "./studios.js";
 import BandDatePicker from "./BandDatePicker.jsx";
 import { generateCandidates, getBandSelectedDates, getDefaultCandidateRange, normalizeCandidateRange, summarizeCandidateDates, updateBandSelectedDates } from "./scheduling.js";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
 const ACTIVE_MODE_KEY = "meeting-scheduler:active-mode";
+const BAND_VIEW_KEY = "meeting-scheduler:band-view";
 const BAND_DURATION_OPTIONS = Array.from({ length: 10 }, (_, index) => (index + 1) * 60);
 
+function isBandScheduleMode(mode) {
+  return mode === "band" || mode === "live";
+}
+
 function storageKeyFor(mode) {
-  return mode === "band" ? "band-meeting-scheduler:v1" : STORAGE_KEY;
+  if (mode === "band") return "band-meeting-scheduler:v1";
+  if (mode === "live") return "band-live-scheduler:v1";
+  return STORAGE_KEY;
 }
 
 const BAND_DM_TEMPLATE = [
@@ -92,6 +101,53 @@ const BAND_TEMPLATE_BLOCKS = [
 
 const BAND_TEMPLATE_BLOCK_IDS = new Set(BAND_TEMPLATE_BLOCKS.map((block) => block.id));
 const BAND_TEMPLATE_VARIABLES = ["{studioDate}", "{durationHours}", "{studioPlace}", "{studioUrl}", "{studioAccessUrl}", "{scheduleUrl}", "{candidateList}"];
+
+const LIVE_DM_TEMPLATE = [
+  "みんな、お疲れさま！",
+  "",
+  "ライブ出演の候補日について、参加できる日を教えてください。",
+  "ライブハウスは{livehouseName}を予定しています。",
+  "",
+  "以下のURLから、候補日の出欠を入力してください。",
+  "{scheduleUrl}",
+  "",
+  "出演できる日は○、条件つきなら△、難しい日は×でお願いします。",
+  "入り時間など確認したいことがあれば、コメントに書いてください。",
+  "よろしくお願いします！"
+].join("\n");
+
+const LIVE_DM_PRESETS = [
+  { id: "basic", name: "基本のライブ日程連絡", body: LIVE_DM_TEMPLATE },
+  {
+    id: "friendly",
+    name: "短めのライブ日程連絡",
+    body: [
+      "みんな、お疲れさま！このライブ候補日、出演できそうな日を教えてください。",
+      "会場は{livehouseName}の予定です。",
+      "",
+      "ここに出欠を入れてね。",
+      "{scheduleUrl}",
+      "",
+      "条件がある場合は△とコメントで教えてください。よろしく！"
+    ].join("\n")
+  }
+];
+
+const LIVE_TEMPLATE_BLOCKS = [
+  {
+    id: "live-details",
+    name: "ライブ詳細は確認中",
+    body: "出演時間・持ち時間・集合時間などの詳細は、決まり次第あらためて共有します。"
+  },
+  {
+    id: "live-conditions",
+    name: "出演条件の確認",
+    body: "出演できるものの時間や移動に条件がある場合は、△を選んでコメントに書いてもらえると助かります。"
+  }
+];
+
+const LIVE_TEMPLATE_BLOCK_IDS = new Set(LIVE_TEMPLATE_BLOCKS.map((block) => block.id));
+const LIVE_TEMPLATE_VARIABLES = ["{liveDate}", "{livehouseName}", "{livehouseUrl}", "{livehouseAccessUrl}", "{scheduleUrl}", "{candidateList}"];
 
 const DEFAULT_DM_TEMPLATE = [
   "こんばんは！{guestNameWithSuffix}",
@@ -176,7 +232,8 @@ function newId(prefix) {
 }
 
 function makeDefaultState(mode = "radio") {
-  const isBand = mode === "band";
+  const isBand = isBandScheduleMode(mode);
+  const isLive = mode === "live";
   const broadcastDate = formatInputDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000));
   const candidateRange = getDefaultCandidateRange(broadcastDate, mode);
   const state = {
@@ -187,19 +244,20 @@ function makeDefaultState(mode = "radio") {
     ...candidateRange,
     ...(isBand ? { selectedDates: [broadcastDate] } : {}),
     includeWeekends: true,
-    durationMinutes: isBand ? 180 : 30,
-    timeSlots: isBand ? ["18:00", "19:00", "20:00"] : ["20:00", "21:00", "22:00"],
+    durationMinutes: isLive ? 0 : isBand ? 180 : 30,
+    timeSlots: isLive ? [] : isBand ? ["18:00", "19:00", "20:00"] : ["20:00", "21:00", "22:00"],
     candidates: [],
     scheduleUrl: "",
     share: null,
     decidedAt: "",
     meetingPlace: isBand ? "" : "オンライン（Discord / Zoomなど）",
     studios: [],
+    livehouses: [],
     studioId: "",
     studioUrl: "",
     studioAccessUrl: "",
     meetingNotes: "",
-    guestDmDraft: isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE,
+    guestDmDraft: isLive ? LIVE_DM_TEMPLATE : isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE,
     templateBlocks: [],
     dmPresets: []
   };
@@ -209,20 +267,34 @@ function makeDefaultState(mode = "radio") {
 function normalizeState(input = {}, mode = "radio") {
   const base = makeDefaultState(mode);
   const next = { ...base, ...input, mode };
+  const isBand = isBandScheduleMode(mode);
+  const isLive = mode === "live";
   if (mode === "band" && !BAND_DURATION_OPTIONS.includes(Number(next.durationMinutes))) {
     next.durationMinutes = 180;
   }
+  if (isLive) {
+    next.durationMinutes = 0;
+    next.timeSlots = [];
+  }
   const fallbackRange = getDefaultCandidateRange(next.broadcastDate, mode);
   if (!next.candidateStartDate && next.broadcastDate) {
-    next.candidateStartDate = mode === "band" ? fallbackRange.candidateStartDate : addDays(next.broadcastDate, -Number(next.leadStartDays || 7));
+    next.candidateStartDate = isBand ? fallbackRange.candidateStartDate : addDays(next.broadcastDate, -Number(next.leadStartDays || 7));
   }
   if (!next.candidateEndDate && next.broadcastDate) {
-    next.candidateEndDate = mode === "band" ? fallbackRange.candidateEndDate : addDays(next.broadcastDate, -Number(next.leadEndDays || 1));
+    next.candidateEndDate = isBand ? fallbackRange.candidateEndDate : addDays(next.broadcastDate, -Number(next.leadEndDays || 1));
   }
   delete next.leadStartDays;
   delete next.leadEndDays;
-  if (mode === "band") next.selectedDates = getBandSelectedDates({ ...next, selectedDates: input.selectedDates, candidates: input.candidates });
+  if (isBand) next.selectedDates = getBandSelectedDates({ ...next, selectedDates: input.selectedDates, candidates: input.candidates });
   if (!Array.isArray(next.candidates)) next.candidates = generateCandidates(next);
+  if (isLive) {
+    next.candidates = next.candidates.map((candidate) => ({
+      ...candidate,
+      id: `${candidate.date}-live`,
+      start: "",
+      end: ""
+    }));
+  }
   if (next.share && !next.share.id) next.share = null;
   const legacyScheduleUrlKey = ["chousei", "sanUrl"].join("");
   if (!next.scheduleUrl && next[legacyScheduleUrlKey]) next.scheduleUrl = next[legacyScheduleUrlKey];
@@ -231,6 +303,7 @@ function normalizeState(input = {}, mode = "radio") {
   if (!Array.isArray(next.templateBlocks)) next.templateBlocks = [];
   if (!Array.isArray(next.dmPresets)) next.dmPresets = [];
   next.studios = normalizeStudios(next.studios);
+  next.livehouses = normalizeStudios(next.livehouses);
   next.studioUrl = safeWebUrl(next.studioUrl);
   next.studioAccessUrl = safeWebUrl(next.studioAccessUrl);
   return next;
@@ -266,9 +339,13 @@ function renderTemplate(template, data, candidateLines) {
     studioPlace: data.meetingPlace || "未定",
     studioUrl: safeWebUrl(data.studioUrl),
     studioAccessUrl: safeWebUrl(data.studioAccessUrl),
+    liveDate: data.studioDateLabel || formatJapaneseDate(data.broadcastDate) || "未定",
+    livehouseName: data.meetingPlace || "未定",
+    livehouseUrl: safeWebUrl(data.studioUrl),
+    livehouseAccessUrl: safeWebUrl(data.studioAccessUrl),
     meetingPlace: data.meetingPlace || "オンライン",
     scheduleUrl: data.scheduleUrl || "（共有ページを作成するとURLが入ります）",
-    candidateList: candidateLines.length ? candidateLines.join("\n") : "（候補日時を生成してください）"
+    candidateList: candidateLines.length ? candidateLines.join("\n") : data.mode === "live" ? "（候補日を選んでください）" : "（候補日時を生成してください）"
   };
   return String(template || "").replace(/\{\{?\s*([a-zA-Z0-9_]+)\s*\}\}?/g, (match, key) => values[key] ?? match);
 }
@@ -287,6 +364,8 @@ function TextInput(props) {
 }
 
 function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, copied, setCopied }) {
+  const isLive = data.mode === "live";
+  const isBand = isBandScheduleMode(data.mode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [live, setLive] = useState(null); // {event, responses}
@@ -297,7 +376,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
 
   const createShare = async () => {
     if (enabledCandidates.length === 0) {
-      alert("候補日時がありません。先に候補日を生成してください。");
+      alert(`${isLive ? "候補日" : "候補日時"}がありません。先に候補日を設定してください。`);
       return;
     }
     if (data.share?.id && !confirm("すでに共有ページがあります。新しく作り直しますか？（今までの回答は新しいページに引き継がれません）")) {
@@ -337,7 +416,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
   const updateShare = async () => {
     if (!data.share?.id) return;
     if (enabledCandidates.length === 0) {
-      alert("候補日時がありません。先に候補日を生成してください。");
+      alert(`${isLive ? "候補日" : "候補日時"}がありません。先に候補日を設定してください。`);
       return;
     }
     setBusy(true);
@@ -381,7 +460,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
     <section className="panel">
       <div className="panel-head">
         <h2>共有調整ページ</h2>
-        <span>{data.mode === "band" ? "メンバーの出欠" : "ゲストさんの出欠"}</span>
+        <span>{isBand ? "メンバーの出欠" : "ゲストさんの出欠"}</span>
       </div>
 
       {!apiConfigured() && (
@@ -416,7 +495,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
               <RefreshCcw size={16} />
               {busy ? "取得中..." : "回答状況を更新"}
             </button>
-            <button className="secondary" onClick={updateShare} disabled={busy} title="URLはそのまま、候補日時を今の内容に置き換えます">
+            <button className="secondary" onClick={updateShare} disabled={busy} title={`URLはそのまま、${isLive ? "候補日" : "候補日時"}を今の内容に置き換えます`}>
               <CalendarDays size={16} />
               {updated ? "候補を更新しました！" : "今の候補で共有ページを更新"}
             </button>
@@ -425,7 +504,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
             </button>
           </div>
           <p className="hint">
-            日付や時間を変えたら「今の候補で共有ページを更新」。URLは変わらず、届いている回答も残ります。
+            {isLive ? "候補日を変えたら" : "日付や時間を変えたら"}「今の候補で共有ページを更新」。URLは変わらず、届いている回答も残ります。
           </p>
 
           {live && (
@@ -434,6 +513,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
                 candidates={live.event.candidates}
                 responses={live.responses}
                 decidedCandidateId={decideTarget}
+                candidateHeading={isLive ? "候補日" : "候補日時"}
               />
               <div className="decide-row">
                 <select value={decideTarget} onChange={(event) => setDecideTarget(event.target.value)}>
@@ -445,7 +525,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
                   ))}
                 </select>
                 <button className="primary" onClick={decide} disabled={busy || !decideTarget}>
-                  <Check size={16} />この日時に決定
+                  <Check size={16} />{isLive ? "この日に決定" : "この日時に決定"}
                 </button>
               </div>
               {live.event.decidedAt && (
@@ -468,6 +548,16 @@ const WORKSPACE_TABS = [
   { id: "settings", label: "設定", Icon: Settings }
 ];
 
+const BAND_SCHEDULE_TABS = [
+  { id: "band", label: "スタジオリハ日程", Icon: Guitar },
+  { id: "live", label: "ライブ日程", Icon: Music2 }
+];
+
+const SETTINGS_TABS = [
+  { id: "studios", label: "スタジオ登録", Icon: Guitar },
+  { id: "livehouses", label: "ライブハウス登録", Icon: MapPin }
+];
+
 function ModeTabs({ mode, onModeChange }) {
   return <div className="mode-tabs" role="tablist" aria-label="スケジュールと設定">
     {WORKSPACE_TABS.map(({ id, label, Icon }, index) => <button
@@ -487,12 +577,38 @@ function ModeTabs({ mode, onModeChange }) {
   </div>;
 }
 
-function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studios }) {
-  const isBand = mode === "band";
-  const defaultTemplate = isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE;
-  const defaultBlocks = isBand ? BAND_TEMPLATE_BLOCKS : DEFAULT_TEMPLATE_BLOCKS;
-  const defaultBlockIds = isBand ? BAND_TEMPLATE_BLOCK_IDS : DEFAULT_TEMPLATE_BLOCK_IDS;
-  const defaultPresets = isBand ? BAND_DM_PRESETS : DEFAULT_DM_PRESETS;
+function SubTabs({ tabs, value, onChange, label, idPrefix }) {
+  return <div className="sub-tabs" role="tablist" aria-label={label}>
+    {tabs.map(({ id, label: tabLabel, Icon }, index) => <button
+      key={id}
+      id={`${idPrefix}-tab-${id}`}
+      role="tab"
+      aria-selected={value === id}
+      tabIndex={value === id ? 0 : -1}
+      onClick={() => onChange(id)}
+      onKeyDown={(event) => {
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 :
+          event.key === "ArrowRight" ? (index + 1) % tabs.length :
+          event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : -1;
+        if (nextIndex < 0) return;
+        event.preventDefault();
+        const nextValue = tabs[nextIndex].id;
+        onChange(nextValue);
+        requestAnimationFrame(() => document.getElementById(`${idPrefix}-tab-${nextValue}`)?.focus());
+      }}
+    ><Icon size={18} />{tabLabel}</button>)}
+  </div>;
+}
+
+function SchedulerWorkspace({ mode, data, update, onModeChange, onBandModeChange, onImport, studios, livehouses }) {
+  const isBand = isBandScheduleMode(mode);
+  const isLive = mode === "live";
+  const isRehearsal = mode === "band";
+  const registeredVenues = isLive ? livehouses : studios;
+  const defaultTemplate = isLive ? LIVE_DM_TEMPLATE : isRehearsal ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE;
+  const defaultBlocks = isLive ? LIVE_TEMPLATE_BLOCKS : isRehearsal ? BAND_TEMPLATE_BLOCKS : DEFAULT_TEMPLATE_BLOCKS;
+  const defaultBlockIds = isLive ? LIVE_TEMPLATE_BLOCK_IDS : isRehearsal ? BAND_TEMPLATE_BLOCK_IDS : DEFAULT_TEMPLATE_BLOCK_IDS;
+  const defaultPresets = isLive ? LIVE_DM_PRESETS : isRehearsal ? BAND_DM_PRESETS : DEFAULT_DM_PRESETS;
   const [copied, setCopied] = useState("");
   const [newSlot, setNewSlot] = useState("19:30");
   const [newBlockName, setNewBlockName] = useState("");
@@ -511,10 +627,11 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
   const candidateRange = useMemo(() => normalizeCandidateRange(data), [data]);
 
   const eventTitle = useMemo(() => {
-    if (isBand) return "バンド スタジオリハ";
+    if (isLive) return "バンド ライブ日程";
+    if (isRehearsal) return "バンド スタジオリハ";
     const guest = data.guestName.trim() ? `${data.guestName.trim()}さん` : "ゲストさん";
     return `${data.episodeTitle || "Sunoパ！"} ${guest} 事前打ち合わせ`;
-  }, [data.episodeTitle, data.guestName, isBand]);
+  }, [data.episodeTitle, data.guestName, isLive, isRehearsal]);
 
   const candidateLines = useMemo(
     () => enabledCandidates.map((candidate) => formatCandidateLabel(candidate)),
@@ -544,20 +661,31 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
   const selectedSavedPreset = (data.dmPresets || []).find((preset) => preset.id === selectedPresetId);
 
   const memoText = useMemo(
-    () =>
-      [
-        isBand ? `スタジオリハの所要時間は${data.durationMinutes / 60}時間です。` : `所要時間は${data.durationMinutes || 30}分ほどです。`,
-        `${isBand ? "スタジオ場所" : "場所"}: ${data.meetingPlace || (isBand ? "未定" : "オンライン")}`,
-        ...(isBand ? studioLinkLines(data) : []),
-        isBand ? "次のスタジオリハ、みんなが集まれる日を教えてください。途中参加や希望のスタジオがあればコメントにお願いします。" : "番組の流れ、紹介楽曲、記事掲載内容、NG事項の確認をします。",
+    () => {
+      if (isLive) return [
+        `ライブハウス: ${data.meetingPlace || "未定"}`,
+        ...venueLinkLines(data, "livehouse"),
+        "ライブ出演の日程を調整します。出演できる候補日を教えてください。",
+        "出演できる日に○、難しい日に×、条件つきなら△でお願いします。",
+        bandDateSummary ? `ライブ候補日: ${bandDateSummary}` : ""
+      ].filter(Boolean).join("\n");
+      if (isRehearsal) return [
+        `スタジオリハの所要時間は${data.durationMinutes / 60}時間です。`,
+        `スタジオ場所: ${data.meetingPlace || "未定"}`,
+        ...studioLinkLines(data),
+        "次のスタジオリハ、みんなが集まれる日を教えてください。途中参加や希望のスタジオがあればコメントにお願いします。",
         "参加できる日時に○、難しい日時に×、条件つきなら△でお願いします。",
-        isBand
-          ? (bandDateSummary ? `スタジオ候補日: ${bandDateSummary}` : "")
-          : (data.broadcastDate ? `放送予定日: ${formatJapaneseDate(data.broadcastDate)}` : "")
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    [bandDateSummary, data.broadcastDate, data.durationMinutes, data.meetingPlace, data.studioUrl, data.studioAccessUrl, isBand]
+        bandDateSummary ? `スタジオ候補日: ${bandDateSummary}` : ""
+      ].filter(Boolean).join("\n");
+      return [
+        `所要時間は${data.durationMinutes || 30}分ほどです。`,
+        `場所: ${data.meetingPlace || "オンライン"}`,
+        "番組の流れ、紹介楽曲、記事掲載内容、NG事項の確認をします。",
+        "参加できる日時に○、難しい日時に×、条件つきなら△でお願いします。",
+        data.broadcastDate ? `放送予定日: ${formatJapaneseDate(data.broadcastDate)}` : ""
+      ].filter(Boolean).join("\n");
+    },
+    [bandDateSummary, data.broadcastDate, data.durationMinutes, data.meetingPlace, data.studioUrl, data.studioAccessUrl, isLive, isRehearsal]
   );
 
   const shareUrl = data.share?.id ? shareUrlFor(data.share.id, mode) : "";
@@ -573,7 +701,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
         "# Codex Task Pack",
         "",
         "目的:",
-        isBand ? "バンドのスタジオリハの日程候補とメンバー向けの連絡文面を整えてください。" : "Radio Meeting Schedulerでゲスト打ち合わせの日程候補とDM文面を整えてください。",
+        isLive ? "バンドのライブ出演候補日とメンバー向けの連絡文面を整えてください。" : isRehearsal ? "バンドのスタジオリハの日程候補とメンバー向けの連絡文面を整えてください。" : "Radio Meeting Schedulerでゲスト打ち合わせの日程候補とDM文面を整えてください。",
         "",
         "日程調整URL:",
         scheduleUrl || "（未設定）",
@@ -584,7 +712,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
         "メモ:",
         memoText,
         "",
-        "候補日時:",
+        isLive ? "候補日:" : "候補日時:",
         candidateLines.join("\n") || "-",
         "",
         isBand ? "メンバーへの連絡文面:" : "ゲストDM文面:",
@@ -592,20 +720,22 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
         "",
         "作成後に返してほしいもの:",
         isBand ? "1. メンバーに送る連絡文面" : "1. ゲストさんに送るDM文面",
-        "2. 日程確定後にRadio Meeting Schedulerへ記録すべき内容",
+        isLive ? "2. ライブ日程確定後に記録すべき内容" : isRehearsal ? "2. スタジオリハ確定後に記録すべき内容" : "2. 日程確定後にRadio Meeting Schedulerへ記録すべき内容",
         "",
         "注意:",
-        "候補日時を勝手に増やさず、上記候補だけで作成してください。"
+        `${isLive ? "候補日" : "候補日時"}を勝手に増やさず、上記候補だけで作成してください。`
       ].join("\n"),
-    [candidateLines, data.guestDmDraft, eventTitle, memoText, scheduleUrl, templateData, isBand]
+    [candidateLines, data.guestDmDraft, eventTitle, memoText, scheduleUrl, templateData, isBand, isLive, isRehearsal]
   );
 
   const guestDm = useMemo(() => {
     const body = renderTemplate(data.guestDmDraft, templateData, candidateLines);
-    const links = isBand ? studioLinkLines(data).filter((line) => !body.includes(line.slice(line.indexOf(": ") + 2))) : [];
+    const links = isBand
+      ? venueLinkLines(data, isLive ? "livehouse" : "studio").filter((line) => !body.includes(line.slice(line.indexOf(": ") + 2)))
+      : [];
     return [body, links.join("\n")].filter(Boolean).join("\n\n");
-  }, [candidateLines, data, templateData, isBand]);
-  const candidateCopyText = useMemo(() => candidateLines.join("\n") || "候補日時がまだありません。", [candidateLines]);
+  }, [candidateLines, data, templateData, isBand, isLive]);
+  const candidateCopyText = useMemo(() => candidateLines.join("\n") || `${isLive ? "候補日" : "候補日時"}がまだありません。`, [candidateLines, isLive]);
 
   const regenerate = () => {
     update({ candidates: generateCandidates(data) });
@@ -622,7 +752,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
   const updateDuration = (durationMinutes) => {
     update({
       durationMinutes,
-      ...(isBand ? {
+      ...(isRehearsal ? {
         candidates: data.candidates.map((candidate) => ({
           ...candidate,
           id: candidateId(candidate.date, candidate.start, durationMinutes),
@@ -775,9 +905,10 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
       try {
         const parsed = JSON.parse(String(reader.result));
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid backup");
-        const importedMode = parsed.mode === "band" ? "band" : "radio";
+        const importedMode = parsed.mode === "live" ? "live" : parsed.mode === "band" ? "band" : "radio";
         const next = normalizeState(parsed, importedMode);
         if (!Array.isArray(parsed.studios)) delete next.studios;
+        if (!Array.isArray(parsed.livehouses)) delete next.livehouses;
         onImport(next, importedMode);
       } catch {
         alert("JSONを読み込めませんでした。");
@@ -788,12 +919,13 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
   };
 
   const reset = () => {
-    if (!confirm(`${isBand ? "バンド" : "ラジオ"}の入力内容を初期状態に戻しますか？`)) return;
-    update({ ...makeDefaultState(mode), studios: data.studios });
+    const scheduleName = isLive ? "ライブ日程" : isRehearsal ? "スタジオリハ日程" : "ラジオ";
+    if (!confirm(`${scheduleName}の入力内容を初期状態に戻しますか？`)) return;
+    update({ ...makeDefaultState(mode), studios: data.studios, livehouses: data.livehouses });
   };
 
   return (
-    <main className={`app-shell ${isBand ? "band-mode" : "radio-mode"}`}>
+    <main className={`app-shell ${isBand ? "band-mode" : "radio-mode"} ${isLive ? "live-mode" : ""}`}>
       <header className="app-header">
         <div>
           <span className="eyebrow">Umbrella Parade Toolkit</span>
@@ -813,13 +945,20 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
         </div>
       </header>
 
-      <ModeTabs mode={mode} onModeChange={onModeChange} />
+      <ModeTabs mode={isBand ? "band" : mode} onModeChange={onModeChange} />
+      {isBand && <SubTabs
+        tabs={BAND_SCHEDULE_TABS}
+        value={mode}
+        onChange={onBandModeChange}
+        label="バンド日程の種類"
+        idPrefix="band-schedule"
+      />}
 
-      <div id="schedule-workspace" role="tabpanel" aria-labelledby={`mode-tab-${mode}`}>
+      <div id="schedule-workspace" role="tabpanel" aria-labelledby={isBand ? `band-schedule-tab-${mode}` : `mode-tab-${mode}`}>
       <section className="layout">
         <div className="panel">
           <div className="panel-head">
-            <h2>{isBand ? "バンド スタジオリハ" : "打ち合わせ設定"}</h2>
+            <h2>{isLive ? "バンド ライブ日程" : isRehearsal ? "バンド スタジオリハ" : "打ち合わせ設定"}</h2>
             <span>{enabledCandidates.length}候補</span>
           </div>
           <div className="form-grid">
@@ -833,12 +972,12 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
                 </Field>
               </>
             )}
-            <Field label={isBand ? "スタジオ予定日" : "放送予定日"}>
+            <Field label={isLive ? "ライブ予定日" : isRehearsal ? "スタジオ予定日" : "放送予定日"}>
               <input type="date" value={data.broadcastDate} onChange={(event) => updateBroadcastDate(event.target.value)} />
             </Field>
-            <Field label="所要時間">
+            {!isLive && <Field label="所要時間">
               <select value={data.durationMinutes} onChange={(event) => updateDuration(Number(event.target.value))}>
-                {isBand ? BAND_DURATION_OPTIONS.map((minutes) => (
+                {isRehearsal ? BAND_DURATION_OPTIONS.map((minutes) => (
                   <option key={minutes} value={minutes}>{minutes / 60}時間</option>
                 )) : (
                   <>
@@ -848,8 +987,8 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
                   </>
                 )}
               </select>
-            </Field>
-            {isBand ? <BandDatePicker selectedDates={data.selectedDates} broadcastDate={data.broadcastDate} onChange={(dates) => update(updateBandSelectedDates(data, dates))} /> : <>
+            </Field>}
+            {isBand ? <BandDatePicker selectedDates={data.selectedDates} broadcastDate={data.broadcastDate} onChange={(dates) => update(updateBandSelectedDates(data, dates))} type={isLive ? "live" : "rehearsal"} /> : <>
             <Field label="候補開始日">
               <input type="date" value={data.candidateStartDate || ""} onChange={(event) => update({ candidateStartDate: event.target.value })} />
             </Field>
@@ -863,14 +1002,14 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
               </button>
             </div>
             </>}
-            {isBand && <Field label="登録済みスタジオ" wide>
-              <select value={studios.some((studio) => studio.id === data.studioId) ? data.studioId : ""} onChange={(event) => update(studioSelection(studios.find((studio) => studio.id === event.target.value)))}>
+            {isBand && <Field label={isLive ? "登録済みライブハウス" : "登録済みスタジオ"} wide>
+              <select value={registeredVenues.some((venue) => venue.id === data.studioId) ? data.studioId : ""} onChange={(event) => update(studioSelection(registeredVenues.find((venue) => venue.id === event.target.value)))}>
                 <option value="">未定・直接入力</option>
-                {studios.map((studio) => <option key={studio.id} value={studio.id}>{studio.name}</option>)}
+                {registeredVenues.map((venue) => <option key={venue.id} value={venue.id}>{venue.name}</option>)}
               </select>
             </Field>}
-            <Field label={isBand ? "スタジオ場所" : "打ち合わせ場所"} wide>
-              <TextInput value={data.meetingPlace} readOnly={isBand && studios.some((studio) => studio.id === data.studioId)} onChange={(event) => update(isBand ? { ...studioSelection(null), meetingPlace: event.target.value } : { meetingPlace: event.target.value })} placeholder={isBand ? "スタジオ名・住所（未定なら空欄）" : undefined} />
+            <Field label={isLive ? "ライブハウス" : isRehearsal ? "スタジオ場所" : "打ち合わせ場所"} wide>
+              <TextInput value={data.meetingPlace} readOnly={isBand && registeredVenues.some((venue) => venue.id === data.studioId)} onChange={(event) => update(isBand ? { ...studioSelection(null), meetingPlace: event.target.value } : { meetingPlace: event.target.value })} placeholder={isLive ? "ライブハウス名・会場名（未定なら空欄）" : isRehearsal ? "スタジオ名・住所（未定なら空欄）" : undefined} />
             </Field>
             {isBand && <div className="wide"><StudioLinks url={data.studioUrl} accessUrl={data.studioAccessUrl} /></div>}
           </div>
@@ -880,10 +1019,10 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
             土日も候補に含める
           </label>}
 
-          <div className="time-section">
+          {!isLive && <div className="time-section">
             <div className="subhead">
               <strong>候補時間</strong>
-              <span>{isBand ? `選択した${data.selectedDates.length}日` : `候補範囲: ${formatJapaneseDate(candidateRange.startDate)}〜${formatJapaneseDate(candidateRange.endDate)}`}</span>
+              <span>{isRehearsal ? `選択した${data.selectedDates.length}日` : `候補範囲: ${formatJapaneseDate(candidateRange.startDate)}〜${formatJapaneseDate(candidateRange.endDate)}`}</span>
             </div>
             <div className="time-list">
               {data.timeSlots.map((slot, index) => (
@@ -901,31 +1040,31 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
                 </button>
               </div>
             </div>
-            <button className="primary" onClick={regenerate} disabled={isBand && (!data.selectedDates.length || !data.timeSlots.length)}>
-              <CalendarDays size={16} />{isBand ? "選択した日付で候補時間を更新" : "候補日を自動生成"}
+            <button className="primary" onClick={regenerate} disabled={isRehearsal && (!data.selectedDates.length || !data.timeSlots.length)}>
+              <CalendarDays size={16} />{isRehearsal ? "選択した日付で候補時間を更新" : "候補日を自動生成"}
             </button>
-          </div>
+          </div>}
         </div>
 
         <div className="panel">
           <div className="panel-head">
-            <h2>候補日時</h2>
+            <h2>{isLive ? "候補日" : "候補日時"}</h2>
             <span>{data.candidates.length}件</span>
           </div>
           <div className="candidate-list">
             {data.candidates.map((candidate) => (
-              <div className={candidate.enabled ? "candidate-row" : "candidate-row muted"} key={candidate.id}>
+              <div className={`${candidate.enabled ? "candidate-row" : "candidate-row muted"}${isLive ? " date-only" : ""}`} key={candidate.id}>
                 <label className="candidate-check">
                   <input type="checkbox" checked={candidate.enabled} onChange={() => toggleCandidate(candidate.id)} />
                   <span>{formatJapaneseDate(candidate.date)}</span>
                 </label>
-                <strong>{formatCandidateTime(candidate)}</strong>
+                {!isLive && <strong>{formatCandidateTime(candidate)}</strong>}
                 <button className="icon-danger" onClick={() => removeCandidate(candidate.id)} aria-label="候補を削除">
                   <Trash2 size={16} />
                 </button>
               </div>
             ))}
-            {data.candidates.length === 0 && <p className="empty">{isBand ? "候補日時がありません。" : "候補日を自動生成してください。"}</p>}
+            {data.candidates.length === 0 && <p className="empty">{isLive ? "候補日がありません。" : isRehearsal ? "候補日時がありません。" : "候補日を自動生成してください。"}</p>}
           </div>
         </div>
       </section>
@@ -955,7 +1094,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
             </div>
           </div>
           <textarea aria-label={isBand ? "メンバーへの連絡文面" : "ゲストDM文面"} value={data.guestDmDraft} onChange={(event) => update({ guestDmDraft: event.target.value })} />
-          <p className="hint">差し込み: {(isBand ? BAND_TEMPLATE_VARIABLES : TEMPLATE_VARIABLES).join(" / ")}。コピー時に実際の内容へ置き換わります。</p>
+          <p className="hint">差し込み: {(isLive ? LIVE_TEMPLATE_VARIABLES : isRehearsal ? BAND_TEMPLATE_VARIABLES : TEMPLATE_VARIABLES).join(" / ")}。コピー時に実際の内容へ置き換わります。</p>
           <div className="rendered-preview">
             <strong>コピー内容プレビュー</strong>
             <pre>{guestDm}</pre>
@@ -1055,18 +1194,18 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
       </section>
 
       <section className="outputs compact-outputs">
-        <OutputBlock title="候補日時コピー" text={candidateCopyText} copied={copied} copyId="candidates" onCopy={copyText} setCopied={setCopied} />
+        <OutputBlock title={isLive ? "候補日コピー" : "候補日時コピー"} text={candidateCopyText} copied={copied} copyId="candidates" onCopy={copyText} setCopied={setCopied} />
         <OutputBlock title="Codex依頼文" text={codexPack} copied={copied} copyId="codex" onCopy={copyText} setCopied={setCopied} />
       </section>
 
       <section className="panel">
         <div className="panel-head">
           <h2>決定後の記録</h2>
-          <span>{isBand ? "スタジオリハの記録" : "次の制作工程へ渡すメモ"}</span>
+          <span>{isLive ? "ライブ日程の記録" : isRehearsal ? "スタジオリハの記録" : "次の制作工程へ渡すメモ"}</span>
         </div>
         <div className="form-grid">
           <Field label="決定日時">
-            <TextInput value={data.decidedAt} onChange={(event) => update({ decidedAt: event.target.value })} placeholder="例: 7/18（土）21:00-21:30" />
+            <TextInput value={data.decidedAt} onChange={(event) => update({ decidedAt: event.target.value })} placeholder={isLive ? "例: 7/18（土）" : "例: 7/18（土）21:00-21:30"} />
           </Field>
           <Field label="ステータス">
             <select value={data.decidedAt ? "fixed" : scheduleUrl ? "waiting" : "draft"} readOnly>
@@ -1075,8 +1214,8 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
               <option value="fixed">日程決定</option>
             </select>
           </Field>
-          <Field label={isBand ? "スタジオリハメモ" : "打ち合わせメモ"} wide>
-            <textarea value={data.meetingNotes} onChange={(event) => update({ meetingNotes: event.target.value })} placeholder={isBand ? "練習曲、必要な機材、予約内容など" : "確認したいこと、当日の議題、決定事項など"} />
+          <Field label={isLive ? "ライブメモ" : isRehearsal ? "スタジオリハメモ" : "打ち合わせメモ"} wide>
+            <textarea value={data.meetingNotes} onChange={(event) => update({ meetingNotes: event.target.value })} placeholder={isLive ? "出演条件、集合時間、持ち時間、連絡事項など" : isRehearsal ? "練習曲、必要な機材、予約内容など" : "確認したいこと、当日の議題、決定事項など"} />
           </Field>
         </div>
       </section>
@@ -1101,7 +1240,11 @@ function OutputBlock({ title, text, copied, copyId, onCopy, setCopied }) {
 }
 
 function HostApp() {
-  const [workspaces, setWorkspaces] = useState(() => ({ radio: loadState("radio"), band: loadState("band") }));
+  const [workspaces, setWorkspaces] = useState(() => ({
+    radio: loadState("radio"),
+    band: loadState("band"),
+    live: loadState("live")
+  }));
   const [mode, setMode] = useState(() => {
     try {
       const savedMode = localStorage.getItem(ACTIVE_MODE_KEY);
@@ -1110,12 +1253,25 @@ function HostApp() {
       return initialMode();
     }
   });
+  const [bandView, setBandView] = useState(() => {
+    try {
+      return localStorage.getItem(BAND_VIEW_KEY) === "live" ? "live" : "band";
+    } catch {
+      return "band";
+    }
+  });
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsView, setSettingsView] = useState("studios");
   const changeMode = (nextMode) => {
     if (nextMode === "settings") { setShowSettings(true); return; }
     setShowSettings(false);
     localStorage.setItem(ACTIVE_MODE_KEY, nextMode);
     setMode(nextMode);
+  };
+  const changeBandView = (nextView) => {
+    if (nextView !== "band" && nextView !== "live") return;
+    localStorage.setItem(BAND_VIEW_KEY, nextView);
+    setBandView(nextView);
   };
   // Keep pending share requests attached to their original workspace when switching tabs.
   const updateWorkspace = (targetMode, patch) => {
@@ -1127,13 +1283,27 @@ function HostApp() {
   };
   const importMode = (data, importedMode) => {
     updateWorkspace(importedMode, data);
+    if (importedMode === "live") {
+      if (Array.isArray(data.livehouses)) updateWorkspace("band", { livehouses: data.livehouses });
+      changeBandView("live");
+      changeMode("band");
+      return;
+    }
+    if (importedMode === "band") changeBandView("band");
     changeMode(importedMode);
   };
   if (showSettings) return <main className="app-shell">
     <header className="app-header"><div><span className="eyebrow">Umbrella Parade Toolkit</span><h1>設定</h1></div></header>
     <ModeTabs mode="settings" onModeChange={changeMode} />
-    <div id="schedule-workspace" role="tabpanel" aria-labelledby="mode-tab-settings">
-      <StudioSettings studios={workspaces.band.studios} onSave={(studio) => {
+    <SubTabs
+      tabs={SETTINGS_TABS}
+      value={settingsView}
+      onChange={setSettingsView}
+      label="登録する場所の種類"
+      idPrefix="settings"
+    />
+    <div id="schedule-workspace" role="tabpanel" aria-labelledby={`settings-tab-${settingsView}`}>
+      {settingsView === "studios" ? <StudioSettings key="studios" studios={workspaces.band.studios} onSave={(studio) => {
         const studios = workspaces.band.studios;
         updateWorkspace("band", {
           studios: studios.some((item) => item.id === studio.id) ? studios.map((item) => item.id === studio.id ? studio : item) : [...studios, studio],
@@ -1142,18 +1312,32 @@ function HostApp() {
       }} onDelete={(id) => updateWorkspace("band", {
         studios: workspaces.band.studios.filter((studio) => studio.id !== id),
         ...(workspaces.band.studioId === id ? { studioId: "" } : {})
-      })} />
+      })} /> : <StudioSettings key="livehouses" type="livehouse" studios={workspaces.band.livehouses} onSave={(livehouse) => {
+        const livehouses = workspaces.band.livehouses;
+        updateWorkspace("band", {
+          livehouses: livehouses.some((item) => item.id === livehouse.id)
+            ? livehouses.map((item) => item.id === livehouse.id ? livehouse : item)
+            : [...livehouses, livehouse]
+        });
+        if (workspaces.live.studioId === livehouse.id) updateWorkspace("live", studioSelection(livehouse));
+      }} onDelete={(id) => {
+        updateWorkspace("band", { livehouses: workspaces.band.livehouses.filter((livehouse) => livehouse.id !== id) });
+        if (workspaces.live.studioId === id) updateWorkspace("live", { studioId: "" });
+      }} />}
     </div>
   </main>;
+  const workspaceMode = mode === "band" ? bandView : "radio";
   return (
     <SchedulerWorkspace
-      key={mode}
-      mode={mode}
-      data={workspaces[mode]}
-      update={(patch) => updateWorkspace(mode, patch)}
+      key={workspaceMode}
+      mode={workspaceMode}
+      data={workspaces[workspaceMode]}
+      update={(patch) => updateWorkspace(workspaceMode, patch)}
       onModeChange={changeMode}
+      onBandModeChange={changeBandView}
       onImport={importMode}
       studios={workspaces.band.studios}
+      livehouses={workspaces.band.livehouses}
     />
   );
 }
@@ -1161,7 +1345,8 @@ function HostApp() {
 function Root() {
   const params = new URLSearchParams(window.location.search);
   const eventId = params.get("e");
-  if (eventId) return <GuestApp eventId={eventId} mode={params.get("mode") === "band" ? "band" : "radio"} />;
+  const pageMode = params.get("mode");
+  if (eventId) return <GuestApp eventId={eventId} mode={pageMode === "live" ? "live" : pageMode === "band" ? "band" : "radio"} />;
   return <HostApp />;
 }
 

@@ -12,7 +12,7 @@ export function summarizeCandidateDates(candidates) {
 
 export function getDefaultCandidateRange(broadcastDate, mode = "radio") {
   if (!broadcastDate) return { candidateStartDate: "", candidateEndDate: "" };
-  if (mode === "band") {
+  if (mode === "band" || mode === "live") {
     return { candidateStartDate: broadcastDate, candidateEndDate: addDays(broadcastDate, 6) };
   }
   return { candidateStartDate: addDays(broadcastDate, -7), candidateEndDate: addDays(broadcastDate, -1) };
@@ -20,10 +20,11 @@ export function getDefaultCandidateRange(broadcastDate, mode = "radio") {
 
 export function normalizeCandidateRange(settings) {
   const fallback = getDefaultCandidateRange(settings.broadcastDate, settings.mode);
+  const isBandSchedule = settings.mode === "band" || settings.mode === "live";
   const legacyStartDays = Number(settings.leadStartDays || 7);
   const legacyEndDays = Number(settings.leadEndDays || 1);
-  const candidateStartDate = settings.candidateStartDate || (settings.mode !== "band" && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyStartDays) : fallback.candidateStartDate);
-  const candidateEndDate = settings.candidateEndDate || (settings.mode !== "band" && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyEndDays) : fallback.candidateEndDate);
+  const candidateStartDate = settings.candidateStartDate || (!isBandSchedule && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyStartDays) : fallback.candidateStartDate);
+  const candidateEndDate = settings.candidateEndDate || (!isBandSchedule && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyEndDays) : fallback.candidateEndDate);
   if (!candidateStartDate || !candidateEndDate) return { startDate: "", endDate: "" };
   return candidateStartDate <= candidateEndDate ? { startDate: candidateStartDate, endDate: candidateEndDate } : { startDate: candidateEndDate, endDate: candidateStartDate };
 }
@@ -50,7 +51,11 @@ export function getBandSelectedDates(settings) {
 }
 
 export function generateCandidates(settings) {
-  const dates = settings.mode === "band" ? getBandSelectedDates(settings) : datesInRange(settings);
+  const isBandSchedule = settings.mode === "band" || settings.mode === "live";
+  const dates = isBandSchedule ? getBandSelectedDates(settings) : datesInRange(settings);
+  if (settings.mode === "live") {
+    return dates.map((date) => ({ id: `${date}-live`, date, start: "", end: "", enabled: true }));
+  }
   return dates.flatMap((date) => settings.timeSlots.map((startTime) => {
     const start = startTime || "20:00";
     return { id: candidateId(date, start, settings.durationMinutes), date, start, end: addMinutes(start, settings.durationMinutes), enabled: true };
@@ -62,7 +67,7 @@ export function updateBandSelectedDates(settings, values) {
   const previousDays = new Set(getBandSelectedDates(settings));
   const selected = new Set(selectedDates);
   const kept = settings.candidates.filter((candidate) => selected.has(candidate.date));
-  const added = generateCandidates({ ...settings, mode: "band", selectedDates: selectedDates.filter((date) => !previousDays.has(date)) });
+  const added = generateCandidates({ ...settings, mode: settings.mode === "live" ? "live" : "band", selectedDates: selectedDates.filter((date) => !previousDays.has(date)) });
   return {
     selectedDates,
     candidates: [...kept, ...added].sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start))

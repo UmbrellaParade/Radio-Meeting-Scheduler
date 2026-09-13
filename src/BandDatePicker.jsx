@@ -11,9 +11,10 @@ function CalendarChevron({ orientation, className }) {
   return <Icon size={20} className={className} aria-hidden="true" />;
 }
 
-export default function BandDatePicker({ selectedDates, broadcastDate, onChange }) {
+export default function BandDatePicker({ selectedDates, broadcastDate, onChange, type = "rehearsal" }) {
   const [month, setMonth] = useState(() => toDate(selectedDates[0] || broadcastDate || formatInputDate(new Date())));
-  return <section className="band-date-picker wide" aria-label="スタジオ候補日の選択">
+  const ariaLabel = type === "live" ? "ライブ候補日の選択" : "スタジオ候補日の選択";
+  return <section className="band-date-picker wide" aria-label={ariaLabel}>
     <div className="subhead"><strong>候補日</strong><span>{selectedDates.length}日選択中</span></div>
     <DayPicker
       mode="multiple" locale={ja} weekStartsOn={0} month={month} onMonthChange={setMonth}

@@ -13,7 +13,7 @@ export function shareUrlFor(shareId, mode) {
   url.searchParams.delete("embed");
   url.searchParams.delete("initialMode");
   url.searchParams.set("e", shareId);
-  if (mode === "band") url.searchParams.set("mode", "band");
+  if (mode === "band" || mode === "live") url.searchParams.set("mode", mode);
   else url.searchParams.delete("mode");
   return url.href;
 }

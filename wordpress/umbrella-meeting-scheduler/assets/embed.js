@@ -8,7 +8,8 @@
     const eventId = params.get('e');
     if (eventId && /^[a-zA-Z0-9_-]{1,128}$/.test(eventId)) {
       source.searchParams.set('e', eventId);
-      if (params.get('mode') === 'band') source.searchParams.set('mode', 'band');
+      const scheduleMode = params.get('mode');
+      if (scheduleMode === 'band' || scheduleMode === 'live') source.searchParams.set('mode', scheduleMode);
     }
     frame.src = source.href;
   });

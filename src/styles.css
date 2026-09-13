@@ -131,6 +131,45 @@ h2 {
   outline-offset: -2px;
 }
 
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 0 4px;
+  border-bottom: 1px solid #d8cfbf;
+}
+
+.sub-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: #62596c;
+  font-size: 14px;
+}
+
+.sub-tabs button:hover {
+  background: #f0eee8;
+}
+
+.sub-tabs button[aria-selected="true"] {
+  border-color: #d8cfbf;
+  border-bottom-color: #1f7a73;
+  background: #fff;
+  color: #175b56;
+}
+
+.sub-tabs button:focus-visible {
+  outline: 2px solid #1f7a73;
+  outline-offset: -2px;
+}
+
 .studio-settings { margin-top: 24px; max-width: 900px; }
 .studio-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .studio-form-actions, .studio-form .wide, .form-grid > .wide { grid-column: 1 / -1; }
@@ -167,6 +206,9 @@ h2 {
   .studio-form { grid-template-columns: minmax(0, 1fr); }
   .mode-tabs { gap: 0; }
   .mode-tabs button { flex: 1; padding: 12px 8px; }
+  .sub-tabs { padding: 0; }
+  .sub-tabs button { flex: 1; padding: 9px 4px; font-size: 13px; }
+  .sub-tabs button svg { display: none; }
 }
 
 .primary,
@@ -371,6 +413,10 @@ textarea {
 
 .candidate-row.muted {
   opacity: 0.5;
+}
+
+.candidate-row.date-only {
+  grid-template-columns: minmax(160px, 1fr) 38px;
 }
 
 .candidate-check {
@@ -866,6 +912,10 @@ textarea {
 
   .candidate-row .icon-danger {
     justify-self: end;
+  }
+
+  .candidate-row.date-only {
+    grid-template-columns: minmax(0, 1fr) 38px;
   }
 
   input,

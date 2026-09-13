@@ -34,10 +34,12 @@ export function candidateId(date, start, durationMinutes) {
 }
 
 export function formatCandidateTime(candidate) {
+  if (!candidate.start) return "";
+  if (!candidate.end) return candidate.start;
   const nextDay = candidate.end < candidate.start ? "翌" : "";
   return `${candidate.start}-${nextDay}${candidate.end}`;
 }
 
 export function formatCandidateLabel(candidate) {
-  return `${formatJapaneseDate(candidate.date)} ${formatCandidateTime(candidate)}`;
+  return [formatJapaneseDate(candidate.date), formatCandidateTime(candidate)].filter(Boolean).join(" ");
 }

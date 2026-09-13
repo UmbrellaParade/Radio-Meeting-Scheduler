@@ -58,3 +58,38 @@ test('radio retains its existing date-range and weekend filtering', () => {
   assert.deepEqual(candidates.map((candidate) => candidate.date), ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25']);
   assert.equal(candidates[0].end, '22:00');
 });
+
+test('live schedules create one date-only candidate for each selected day', () => {
+  const live = {
+    ...band,
+    mode: 'live',
+    selectedDates: ['2026-10-17', '2026-10-18'],
+    durationMinutes: 0,
+    timeSlots: []
+  };
+  assert.deepEqual(getDefaultCandidateRange('2026-10-17', 'live'), {
+    candidateStartDate: '2026-10-17',
+    candidateEndDate: '2026-10-23'
+  });
+  assert.deepEqual(generateCandidates(live), [
+    { id: '2026-10-17-live', date: '2026-10-17', start: '', end: '', enabled: true },
+    { id: '2026-10-18-live', date: '2026-10-18', start: '', end: '', enabled: true }
+  ]);
+});
+
+test('live date changes preserve answers-disabled state on dates that remain selected', () => {
+  const live = {
+    ...band,
+    mode: 'live',
+    selectedDates: ['2026-10-17', '2026-10-18'],
+    durationMinutes: 0,
+    timeSlots: []
+  };
+  live.candidates = generateCandidates(live);
+  live.candidates[0].enabled = false;
+  const next = updateBandSelectedDates(live, ['2026-10-17', '2026-10-24']);
+  assert.deepEqual(next.candidates, [
+    { id: '2026-10-17-live', date: '2026-10-17', start: '', end: '', enabled: false },
+    { id: '2026-10-24-live', date: '2026-10-24', start: '', end: '', enabled: true }
+  ]);
+});

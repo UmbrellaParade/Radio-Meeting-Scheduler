@@ -7,7 +7,7 @@ export function answerSymbol(value) {
   return ANSWER_LABELS[value] || "－";
 }
 
-export default function ResponseTable({ candidates, responses, decidedCandidateId = "" }) {
+export default function ResponseTable({ candidates, responses, decidedCandidateId = "", candidateHeading = "候補日時" }) {
   const stats = useMemo(() => {
     const byCandidate = {};
     for (const candidate of candidates) {
@@ -35,7 +35,7 @@ export default function ResponseTable({ candidates, responses, decidedCandidateI
       <table className="response-table">
         <thead>
           <tr>
-            <th className="slot-col">候補日時</th>
+            <th className="slot-col">{candidateHeading}</th>
             <th>○</th>
             <th>△</th>
             <th>×</th>

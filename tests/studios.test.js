@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection } from '../src/studios.js';
+import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection, venueLinkLines } from '../src/studios.js';
 
 test('studio URLs allow web links only and exclude embedded credentials', () => {
   assert.equal(safeWebUrl(' https://studio.example/access?a=1&b=2 '), 'https://studio.example/access?a=1&b=2');
@@ -26,4 +26,15 @@ test('selecting and clearing studios updates name and links together', () => {
   assert.deepEqual(studioLinkLines(selected), ['スタジオ公式サイト: https://studio.example/', 'アクセス・地図: https://maps.example/a']);
   assert.deepEqual(studioSelection(null), { studioId: '', meetingPlace: '', studioUrl: '', studioAccessUrl: '' });
   assert.deepEqual(studioLinkLines({ studioUrl: 'javascript:alert(1)' }), []);
+});
+
+test('livehouse links use livehouse wording while retaining safe URL filtering', () => {
+  assert.deepEqual(venueLinkLines({
+    studioUrl: 'https://live.example/',
+    studioAccessUrl: 'https://maps.example/live'
+  }, 'livehouse'), [
+    'ライブハウス公式サイト: https://live.example/',
+    'アクセス・地図: https://maps.example/live'
+  ]);
+  assert.deepEqual(venueLinkLines({ studioUrl: 'javascript:alert(1)' }, 'livehouse'), []);
 });
