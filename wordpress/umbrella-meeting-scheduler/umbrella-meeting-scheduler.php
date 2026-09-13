@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Meeting Scheduler
  * Plugin URI: https://github.com/UmbrellaParade/Radio-Meeting-Scheduler
  * Description: バンドのスタジオリハとラジオの打ち合わせを調整するツールです。共有ページ、出欠回答、連絡文面に対応します。
- * Version: 1.0.2
+ * Version: 1.0.3
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Author: Umbrella Parade
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('UMS_VERSION', '1.0.2');
+define('UMS_VERSION', '1.0.3');
 define('UMS_PAGE_TEMPLATE', 'umbrella-meeting-scheduler-fullwidth');
 
 function ums_enqueue_assets() {

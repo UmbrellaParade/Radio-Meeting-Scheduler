@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { generateCandidates, getBandSelectedDates, getDefaultCandidateRange, normalizeSelectedDates, updateBandSelectedDates, weekendDatesInMonth } from '../src/scheduling.js';
+import { generateCandidates, getBandSelectedDates, getDefaultCandidateRange, normalizeSelectedDates, summarizeCandidateDates, updateBandSelectedDates, weekendDatesInMonth } from '../src/scheduling.js';
 
 const band = { mode: 'band', broadcastDate: '2026-09-27', timeSlots: ['18:00', '20:00'], durationMinutes: 180, includeWeekends: false };
 
@@ -35,6 +35,15 @@ test('selection changes preserve existing disabled slots and removed time slots'
 
 test('invalid dates and duplicates are excluded, with leap years validated', () => {
   assert.deepEqual(normalizeSelectedDates(['2026-02-29', '2028-02-29', '2026-13-01', '2026-09-31', '2028-02-29', '', null]), ['2028-02-29']);
+});
+
+test('shared band copy summarizes the actual candidate days without duplicates', () => {
+  assert.equal(summarizeCandidateDates([
+    { date: '2026-10-17' },
+    { date: '2026-10-18' },
+    { date: '2026-10-17' },
+    { date: '2026-11-01' }
+  ]), '10/17（土）、10/18（日）、11/1（日）');
 });
 
 test('weekend shortcut targets only the displayed month', () => {

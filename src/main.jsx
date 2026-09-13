@@ -35,7 +35,7 @@ import { initialMode, shareUrlFor, startEmbedBridge } from "./embedding.js";
 import StudioSettings, { StudioLinks } from "./StudioSettings.jsx";
 import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection } from "./studios.js";
 import BandDatePicker from "./BandDatePicker.jsx";
-import { generateCandidates, getBandSelectedDates, getDefaultCandidateRange, normalizeCandidateRange, updateBandSelectedDates } from "./scheduling.js";
+import { generateCandidates, getBandSelectedDates, getDefaultCandidateRange, normalizeCandidateRange, summarizeCandidateDates, updateBandSelectedDates } from "./scheduling.js";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
 const ACTIVE_MODE_KEY = "meeting-scheduler:active-mode";
@@ -262,7 +262,7 @@ function renderTemplate(template, data, candidateLines) {
     broadcastDate: formatJapaneseDate(data.broadcastDate) || "未定",
     durationMinutes: String(data.durationMinutes || 30),
     durationHours: String(Number(data.durationMinutes || 180) / 60),
-    studioDate: formatJapaneseDate(data.broadcastDate) || "未定",
+    studioDate: data.studioDateLabel || formatJapaneseDate(data.broadcastDate) || "未定",
     studioPlace: data.meetingPlace || "未定",
     studioUrl: safeWebUrl(data.studioUrl),
     studioAccessUrl: safeWebUrl(data.studioAccessUrl),
@@ -521,6 +521,11 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
     [enabledCandidates]
   );
 
+  const bandDateSummary = useMemo(
+    () => isBand ? summarizeCandidateDates(enabledCandidates) : "",
+    [enabledCandidates, isBand]
+  );
+
   const templateBlocks = useMemo(() => {
     const savedBlocks = data.templateBlocks || [];
     const savedById = new Map(savedBlocks.map((block) => [block.id, block]));
@@ -546,16 +551,21 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
         ...(isBand ? studioLinkLines(data) : []),
         isBand ? "次のスタジオリハ、みんなが集まれる日を教えてください。途中参加や希望のスタジオがあればコメントにお願いします。" : "番組の流れ、紹介楽曲、記事掲載内容、NG事項の確認をします。",
         "参加できる日時に○、難しい日時に×、条件つきなら△でお願いします。",
-        data.broadcastDate ? `${isBand ? "スタジオ予定日（仮）" : "放送予定日"}: ${formatJapaneseDate(data.broadcastDate)}` : ""
+        isBand
+          ? (bandDateSummary ? `スタジオ候補日: ${bandDateSummary}` : "")
+          : (data.broadcastDate ? `放送予定日: ${formatJapaneseDate(data.broadcastDate)}` : "")
       ]
         .filter(Boolean)
         .join("\n"),
-    [data.broadcastDate, data.durationMinutes, data.meetingPlace, data.studioUrl, data.studioAccessUrl, isBand]
+    [bandDateSummary, data.broadcastDate, data.durationMinutes, data.meetingPlace, data.studioUrl, data.studioAccessUrl, isBand]
   );
 
   const shareUrl = data.share?.id ? shareUrlFor(data.share.id, mode) : "";
   const scheduleUrl = shareUrl || data.scheduleUrl || "";
-  const templateData = useMemo(() => ({ ...data, scheduleUrl }), [data, scheduleUrl]);
+  const templateData = useMemo(
+    () => ({ ...data, scheduleUrl, ...(isBand ? { studioDateLabel: bandDateSummary } : {}) }),
+    [bandDateSummary, data, isBand, scheduleUrl]
+  );
 
   const codexPack = useMemo(
     () =>

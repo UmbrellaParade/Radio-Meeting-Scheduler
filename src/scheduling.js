@@ -1,8 +1,13 @@
-import { addDays, addMinutes, candidateId, formatInputDate, toDate } from "./lib.js";
+import { addDays, addMinutes, candidateId, formatInputDate, formatJapaneseDate, toDate } from "./lib.js";
 
 export function normalizeSelectedDates(values) {
   if (!Array.isArray(values)) return [];
   return [...new Set(values.filter((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && formatInputDate(toDate(value)) === value))].sort();
+}
+
+export function summarizeCandidateDates(candidates) {
+  const dates = normalizeSelectedDates(Array.isArray(candidates) ? candidates.map((candidate) => candidate.date) : []);
+  return dates.map((date) => formatJapaneseDate(date)).join("、");
 }
 
 export function getDefaultCandidateRange(broadcastDate, mode = "radio") {
