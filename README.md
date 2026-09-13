@@ -1,6 +1,8 @@
 # Radio Meeting Scheduler
 
-Radio Meeting Scheduler is a small scheduling helper for Umbrella Parade radio guest meetings.
+Radio Meeting Scheduler is a small scheduling helper for Umbrella Parade radio guest meetings and band studio rehearsals.
+
+The Band and Radio tabs keep separate candidates, shared pages, messages, presets, and notes. Band rehearsals default to three hours, offer durations from one to ten hours, and remember the last selection. The initial band candidate range includes the planned studio date and the following six days; radio keeps the week before the broadcast.
 
 It keeps the meeting workflow separate from Radio Article Studio:
 
@@ -40,4 +42,8 @@ https://umbrellaparade.github.io/Radio-Meeting-Scheduler/
 
 ## Local Data
 
-The app stores its working data in the browser's localStorage. Use JSON export/import for backup or device transfer.
+The app stores its working data in the browser's localStorage. Existing radio data remains under `radio-meeting-scheduler:v1`; band data uses `band-meeting-scheduler:v1`. The selected tab uses `meeting-scheduler:active-mode`.
+
+JSON export backs up the current tab, including its mode. Import restores the matching tab; older backups without a mode restore Radio. Export both tabs separately for a full backup or device transfer.
+
+Band shared URLs include `&mode=band` and display the Umbrella Parade logo and rehearsal copy. Existing radio URLs keep the Sunopa header. No GAS redeployment is required.

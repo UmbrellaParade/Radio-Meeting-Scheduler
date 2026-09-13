@@ -33,6 +33,11 @@ export function candidateId(date, start, durationMinutes) {
   return `${date}-${start}-${durationMinutes}`;
 }
 
+export function formatCandidateTime(candidate) {
+  const nextDay = candidate.end < candidate.start ? "翌" : "";
+  return `${candidate.start}-${nextDay}${candidate.end}`;
+}
+
 export function formatCandidateLabel(candidate) {
-  return `${formatJapaneseDate(candidate.date)} ${candidate.start}-${candidate.end}`;
+  return `${formatJapaneseDate(candidate.date)} ${formatCandidateTime(candidate)}`;
 }

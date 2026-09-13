@@ -6,9 +6,11 @@ import {
   ClipboardCopy,
   Download,
   ExternalLink,
+  Guitar,
   MessageSquareText,
   Pencil,
   Plus,
+  Radio,
   RefreshCcw,
   Share2,
   Trash2,
@@ -21,6 +23,7 @@ import {
   addMinutes,
   candidateId,
   formatCandidateLabel,
+  formatCandidateTime,
   formatInputDate,
   formatJapaneseDate,
   toDate
@@ -30,6 +33,60 @@ import GuestApp from "./guest.jsx";
 import ResponseTable from "./ResponseTable.jsx";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
+const ACTIVE_MODE_KEY = "meeting-scheduler:active-mode";
+const BAND_DURATION_OPTIONS = Array.from({ length: 10 }, (_, index) => (index + 1) * 60);
+
+function storageKeyFor(mode) {
+  return mode === "band" ? "band-meeting-scheduler:v1" : STORAGE_KEY;
+}
+
+const BAND_DM_TEMPLATE = [
+  "みんな、お疲れさま！",
+  "",
+  "次のスタジオリハの日程を合わせたいので、参加できる日時を教えてください。",
+  "所要時間は{durationHours}時間、スタジオ場所は{studioPlace}を予定しています。",
+  "",
+  "以下のURLから、候補日時の出欠を入力してもらえると助かります。",
+  "{scheduleUrl}",
+  "",
+  "参加できる日時は○、条件つきなら△、難しい日時は×でお願いします。",
+  "遅れて参加する場合や希望のスタジオがあれば、コメントに書いてね。",
+  "みんなの回答がそろったら、日程とスタジオを決めましょう！",
+  "よろしくお願いします！"
+].join("\n");
+
+const BAND_DM_PRESETS = [
+  { id: "basic", name: "基本のスタジオリハ連絡", body: BAND_DM_TEMPLATE },
+  {
+    id: "friendly",
+    name: "短めのメンバー向け連絡",
+    body: [
+      "みんな、お疲れさま！次のスタジオリハ、いつなら集まれそう？",
+      "{durationHours}時間、場所は{studioPlace}の予定です。",
+      "",
+      "ここに出欠を入れてね。",
+      "{scheduleUrl}",
+      "",
+      "途中参加やスタジオの希望はコメントで教えてください。よろしく！"
+    ].join("\n")
+  }
+];
+
+const BAND_TEMPLATE_BLOCKS = [
+  {
+    id: "rehearsal-topics",
+    name: "リハで合わせたいこと",
+    body: "当日は、曲の構成・テンポ・入りと終わり方を確認して、通しで合わせられればと思っています。"
+  },
+  {
+    id: "studio-requests",
+    name: "スタジオ・機材の希望",
+    body: "希望のスタジオや必要なレンタル機材があれば教えてください。遅れて参加・早めに退出する場合も、コメントに時間を書いてもらえると助かります。"
+  }
+];
+
+const BAND_TEMPLATE_BLOCK_IDS = new Set(BAND_TEMPLATE_BLOCKS.map((block) => block.id));
+const BAND_TEMPLATE_VARIABLES = ["{studioDate}", "{durationHours}", "{studioPlace}", "{scheduleUrl}", "{candidateList}"];
 
 const DEFAULT_DM_TEMPLATE = [
   "こんばんは！{guestNameWithSuffix}",
@@ -113,8 +170,11 @@ function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function getDefaultCandidateRange(broadcastDate) {
+function getDefaultCandidateRange(broadcastDate, mode = "radio") {
   if (!broadcastDate) return { candidateStartDate: "", candidateEndDate: "" };
+  if (mode === "band") {
+    return { candidateStartDate: broadcastDate, candidateEndDate: addDays(broadcastDate, 6) };
+  }
   return {
     candidateStartDate: addDays(broadcastDate, -7),
     candidateEndDate: addDays(broadcastDate, -1)
@@ -122,13 +182,13 @@ function getDefaultCandidateRange(broadcastDate) {
 }
 
 function normalizeCandidateRange(settings) {
-  const fallback = getDefaultCandidateRange(settings.broadcastDate);
+  const fallback = getDefaultCandidateRange(settings.broadcastDate, settings.mode);
   const legacyStartDays = Number(settings.leadStartDays || 7);
   const legacyEndDays = Number(settings.leadEndDays || 1);
   const candidateStartDate =
-    settings.candidateStartDate || (settings.broadcastDate ? addDays(settings.broadcastDate, -legacyStartDays) : fallback.candidateStartDate);
+    settings.candidateStartDate || (settings.mode !== "band" && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyStartDays) : fallback.candidateStartDate);
   const candidateEndDate =
-    settings.candidateEndDate || (settings.broadcastDate ? addDays(settings.broadcastDate, -legacyEndDays) : fallback.candidateEndDate);
+    settings.candidateEndDate || (settings.mode !== "band" && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyEndDays) : fallback.candidateEndDate);
   if (!candidateStartDate || !candidateEndDate) return { startDate: "", endDate: "" };
   return candidateStartDate <= candidateEndDate
     ? { startDate: candidateStartDate, endDate: candidateEndDate }
@@ -162,38 +222,44 @@ function generateCandidates(settings) {
   return candidates;
 }
 
-function makeDefaultState() {
+function makeDefaultState(mode = "radio") {
+  const isBand = mode === "band";
   const broadcastDate = formatInputDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000));
-  const candidateRange = getDefaultCandidateRange(broadcastDate);
+  const candidateRange = getDefaultCandidateRange(broadcastDate, mode);
   const state = {
-    episodeTitle: "Sunoパ！ゲスト回",
+    mode,
+    episodeTitle: isBand ? "" : "Sunoパ！ゲスト回",
     guestName: "",
     broadcastDate,
     ...candidateRange,
     includeWeekends: true,
-    durationMinutes: 30,
-    timeSlots: ["20:00", "21:00", "22:00"],
+    durationMinutes: isBand ? 180 : 30,
+    timeSlots: isBand ? ["18:00", "19:00", "20:00"] : ["20:00", "21:00", "22:00"],
     candidates: [],
     scheduleUrl: "",
     share: null,
     decidedAt: "",
-    meetingPlace: "オンライン（Discord / Zoomなど）",
+    meetingPlace: isBand ? "" : "オンライン（Discord / Zoomなど）",
     meetingNotes: "",
-    guestDmDraft: DEFAULT_DM_TEMPLATE,
+    guestDmDraft: isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE,
     templateBlocks: [],
     dmPresets: []
   };
   return { ...state, candidates: generateCandidates(state) };
 }
 
-function normalizeState(input = {}) {
-  const base = makeDefaultState();
-  const next = { ...base, ...input };
+function normalizeState(input = {}, mode = "radio") {
+  const base = makeDefaultState(mode);
+  const next = { ...base, ...input, mode };
+  if (mode === "band" && !BAND_DURATION_OPTIONS.includes(Number(next.durationMinutes))) {
+    next.durationMinutes = 180;
+  }
+  const fallbackRange = getDefaultCandidateRange(next.broadcastDate, mode);
   if (!next.candidateStartDate && next.broadcastDate) {
-    next.candidateStartDate = addDays(next.broadcastDate, -Number(next.leadStartDays || 7));
+    next.candidateStartDate = mode === "band" ? fallbackRange.candidateStartDate : addDays(next.broadcastDate, -Number(next.leadStartDays || 7));
   }
   if (!next.candidateEndDate && next.broadcastDate) {
-    next.candidateEndDate = addDays(next.broadcastDate, -Number(next.leadEndDays || 1));
+    next.candidateEndDate = mode === "band" ? fallbackRange.candidateEndDate : addDays(next.broadcastDate, -Number(next.leadEndDays || 1));
   }
   delete next.leadStartDays;
   delete next.leadEndDays;
@@ -202,24 +268,24 @@ function normalizeState(input = {}) {
   const legacyScheduleUrlKey = ["chousei", "sanUrl"].join("");
   if (!next.scheduleUrl && next[legacyScheduleUrlKey]) next.scheduleUrl = next[legacyScheduleUrlKey];
   delete next[legacyScheduleUrlKey];
-  if (!next.guestDmDraft) next.guestDmDraft = DEFAULT_DM_TEMPLATE;
+  if (typeof next.guestDmDraft !== "string") next.guestDmDraft = base.guestDmDraft;
   if (!Array.isArray(next.templateBlocks)) next.templateBlocks = [];
   if (!Array.isArray(next.dmPresets)) next.dmPresets = [];
   return next;
 }
 
-function loadState() {
+function loadState(mode) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return makeDefaultState();
-    return normalizeState(JSON.parse(raw));
+    const raw = localStorage.getItem(storageKeyFor(mode));
+    if (!raw) return makeDefaultState(mode);
+    return normalizeState(JSON.parse(raw), mode);
   } catch {
-    return makeDefaultState();
+    return makeDefaultState(mode);
   }
 }
 
-function shareUrlFor(shareId) {
-  return `${window.location.origin}${window.location.pathname}?e=${shareId}`;
+function shareUrlFor(shareId, mode) {
+  return `${window.location.origin}${window.location.pathname}?e=${encodeURIComponent(shareId)}${mode === "band" ? "&mode=band" : ""}`;
 }
 
 function copyText(text, label, setCopied) {
@@ -237,6 +303,9 @@ function renderTemplate(template, data, candidateLines) {
     episodeTitle: data.episodeTitle || "Sunoパ！ゲスト回",
     broadcastDate: formatJapaneseDate(data.broadcastDate) || "未定",
     durationMinutes: String(data.durationMinutes || 30),
+    durationHours: String(Number(data.durationMinutes || 180) / 60),
+    studioDate: formatJapaneseDate(data.broadcastDate) || "未定",
+    studioPlace: data.meetingPlace || "未定",
     meetingPlace: data.meetingPlace || "オンライン",
     scheduleUrl: data.scheduleUrl || "（共有ページを作成するとURLが入ります）",
     candidateList: candidateLines.length ? candidateLines.join("\n") : "（候補日時を生成してください）"
@@ -264,7 +333,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
   const [decideTarget, setDecideTarget] = useState("");
   const [updated, setUpdated] = useState(false);
 
-  const shareUrl = data.share?.id ? shareUrlFor(data.share.id) : "";
+  const shareUrl = data.share?.id ? shareUrlFor(data.share.id, data.mode) : "";
 
   const createShare = async () => {
     if (enabledCandidates.length === 0) {
@@ -352,7 +421,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
     <section className="panel">
       <div className="panel-head">
         <h2>共有調整ページ</h2>
-        <span>ゲストさんに直接○△×を入力してもらう</span>
+        <span>{data.mode === "band" ? "メンバーの出欠" : "ゲストさんの出欠"}</span>
       </div>
 
       {!apiConfigured() && (
@@ -422,7 +491,7 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
               {live.event.decidedAt && (
                 <p className="decided-banner">
                   <Check size={16} />決定済み: <strong>{live.event.decidedAt}</strong>
-                  （ゲストページにも表示されます）
+                  （回答ページにも表示されます）
                 </p>
               )}
             </>
@@ -433,8 +502,12 @@ function SharePanel({ data, update, eventTitle, memoText, enabledCandidates, cop
   );
 }
 
-function HostApp() {
-  const [data, setData] = useState(loadState);
+function SchedulerWorkspace({ mode, data, update, onModeChange, onImport }) {
+  const isBand = mode === "band";
+  const defaultTemplate = isBand ? BAND_DM_TEMPLATE : DEFAULT_DM_TEMPLATE;
+  const defaultBlocks = isBand ? BAND_TEMPLATE_BLOCKS : DEFAULT_TEMPLATE_BLOCKS;
+  const defaultBlockIds = isBand ? BAND_TEMPLATE_BLOCK_IDS : DEFAULT_TEMPLATE_BLOCK_IDS;
+  const defaultPresets = isBand ? BAND_DM_PRESETS : DEFAULT_DM_PRESETS;
   const [copied, setCopied] = useState("");
   const [newSlot, setNewSlot] = useState("19:30");
   const [newBlockName, setNewBlockName] = useState("");
@@ -445,14 +518,6 @@ function HostApp() {
   const [newPresetName, setNewPresetName] = useState("");
   const [selectedPresetId, setSelectedPresetId] = useState("basic");
 
-  const update = (patch) => {
-    setData((current) => {
-      const next = { ...current, ...patch };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-  };
-
   const enabledCandidates = useMemo(
     () => data.candidates.filter((candidate) => candidate.enabled),
     [data.candidates]
@@ -461,9 +526,10 @@ function HostApp() {
   const candidateRange = useMemo(() => normalizeCandidateRange(data), [data]);
 
   const eventTitle = useMemo(() => {
+    if (isBand) return "バンド スタジオリハ";
     const guest = data.guestName.trim() ? `${data.guestName.trim()}さん` : "ゲストさん";
     return `${data.episodeTitle || "Sunoパ！"} ${guest} 事前打ち合わせ`;
-  }, [data.episodeTitle, data.guestName]);
+  }, [data.episodeTitle, data.guestName, isBand]);
 
   const candidateLines = useMemo(
     () => enabledCandidates.map((candidate) => formatCandidateLabel(candidate)),
@@ -473,35 +539,35 @@ function HostApp() {
   const templateBlocks = useMemo(() => {
     const savedBlocks = data.templateBlocks || [];
     const savedById = new Map(savedBlocks.map((block) => [block.id, block]));
-    const defaultBlocks = DEFAULT_TEMPLATE_BLOCKS.map((block) => ({ ...block, ...savedById.get(block.id) }));
-    const customBlocks = savedBlocks.filter((block) => !DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id));
-    return [...defaultBlocks, ...customBlocks];
-  }, [data.templateBlocks]);
+    const mergedDefaults = defaultBlocks.map((block) => ({ ...block, ...savedById.get(block.id) }));
+    const customBlocks = savedBlocks.filter((block) => !defaultBlockIds.has(block.id));
+    return [...mergedDefaults, ...customBlocks];
+  }, [data.templateBlocks, defaultBlocks, defaultBlockIds]);
   const dmPresets = useMemo(() => {
     const savedPresets = data.dmPresets || [];
     const savedById = new Map(savedPresets.map((preset) => [preset.id, preset]));
-    const defaultPresets = DEFAULT_DM_PRESETS.map((preset) => ({ ...preset, ...savedById.get(preset.id) }));
+    const mergedDefaults = defaultPresets.map((preset) => ({ ...preset, ...savedById.get(preset.id) }));
     const customPresets = savedPresets.filter((preset) => !DEFAULT_DM_PRESET_IDS.has(preset.id));
-    return [...defaultPresets, ...customPresets];
-  }, [data.dmPresets]);
+    return [...mergedDefaults, ...customPresets];
+  }, [data.dmPresets, defaultPresets]);
   const selectedPreset = dmPresets.find((preset) => preset.id === selectedPresetId) ?? dmPresets[0];
   const selectedSavedPreset = (data.dmPresets || []).find((preset) => preset.id === selectedPresetId);
 
   const memoText = useMemo(
     () =>
       [
-        `所要時間は${data.durationMinutes || 30}分ほどです。`,
-        `場所: ${data.meetingPlace || "オンライン"}`,
-        "番組の流れ、紹介楽曲、記事掲載内容、NG事項の確認をします。",
+        isBand ? `スタジオリハの所要時間は${data.durationMinutes / 60}時間です。` : `所要時間は${data.durationMinutes || 30}分ほどです。`,
+        `${isBand ? "スタジオ場所" : "場所"}: ${data.meetingPlace || (isBand ? "未定" : "オンライン")}`,
+        isBand ? "次のスタジオリハ、みんなが集まれる日を教えてください。途中参加や希望のスタジオがあればコメントにお願いします。" : "番組の流れ、紹介楽曲、記事掲載内容、NG事項の確認をします。",
         "参加できる日時に○、難しい日時に×、条件つきなら△でお願いします。",
-        data.broadcastDate ? `放送予定日: ${formatJapaneseDate(data.broadcastDate)}` : ""
+        data.broadcastDate ? `${isBand ? "スタジオ予定日（仮）" : "放送予定日"}: ${formatJapaneseDate(data.broadcastDate)}` : ""
       ]
         .filter(Boolean)
         .join("\n"),
-    [data.broadcastDate, data.durationMinutes, data.meetingPlace]
+    [data.broadcastDate, data.durationMinutes, data.meetingPlace, isBand]
   );
 
-  const shareUrl = data.share?.id ? shareUrlFor(data.share.id) : "";
+  const shareUrl = data.share?.id ? shareUrlFor(data.share.id, mode) : "";
   const scheduleUrl = shareUrl || data.scheduleUrl || "";
   const templateData = useMemo(() => ({ ...data, scheduleUrl }), [data, scheduleUrl]);
 
@@ -511,7 +577,7 @@ function HostApp() {
         "# Codex Task Pack",
         "",
         "目的:",
-        "Radio Meeting Schedulerでゲスト打ち合わせの日程候補とDM文面を整えてください。",
+        isBand ? "バンドのスタジオリハの日程候補とメンバー向けの連絡文面を整えてください。" : "Radio Meeting Schedulerでゲスト打ち合わせの日程候補とDM文面を整えてください。",
         "",
         "日程調整URL:",
         scheduleUrl || "（未設定）",
@@ -525,17 +591,17 @@ function HostApp() {
         "候補日時:",
         candidateLines.join("\n") || "-",
         "",
-        "ゲストDM文面:",
+        isBand ? "メンバーへの連絡文面:" : "ゲストDM文面:",
         renderTemplate(data.guestDmDraft, templateData, candidateLines),
         "",
         "作成後に返してほしいもの:",
-        "1. ゲストさんに送るDM文面",
+        isBand ? "1. メンバーに送る連絡文面" : "1. ゲストさんに送るDM文面",
         "2. 日程確定後にRadio Meeting Schedulerへ記録すべき内容",
         "",
         "注意:",
         "候補日時を勝手に増やさず、上記候補だけで作成してください。"
       ].join("\n"),
-    [candidateLines, data.guestDmDraft, eventTitle, memoText, scheduleUrl, templateData]
+    [candidateLines, data.guestDmDraft, eventTitle, memoText, scheduleUrl, templateData, isBand]
   );
 
   const guestDm = useMemo(() => renderTemplate(data.guestDmDraft, templateData, candidateLines), [candidateLines, data.guestDmDraft, templateData]);
@@ -546,11 +612,24 @@ function HostApp() {
   };
 
   const updateBroadcastDate = (broadcastDate) => {
-    update({ broadcastDate, ...getDefaultCandidateRange(broadcastDate) });
+    update({ broadcastDate, ...getDefaultCandidateRange(broadcastDate, mode) });
   };
 
   const resetCandidateRange = () => {
-    update(getDefaultCandidateRange(data.broadcastDate));
+    update(getDefaultCandidateRange(data.broadcastDate, mode));
+  };
+
+  const updateDuration = (durationMinutes) => {
+    update({
+      durationMinutes,
+      ...(isBand ? {
+        candidates: data.candidates.map((candidate) => ({
+          ...candidate,
+          id: candidateId(candidate.date, candidate.start, durationMinutes),
+          end: addMinutes(candidate.start, durationMinutes)
+        }))
+      } : {})
+    });
   };
 
   const toggleCandidate = (id) => {
@@ -683,7 +762,7 @@ function HostApp() {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = `radio-meeting-scheduler-${data.broadcastDate || "backup"}.json`;
+    anchor.download = `${mode}-meeting-scheduler-${data.broadcastDate || "backup"}.json`;
     anchor.click();
     URL.revokeObjectURL(anchor.href);
   };
@@ -695,7 +774,11 @@ function HostApp() {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        update(normalizeState(parsed));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid backup");
+        const importedMode = parsed.mode === "band" ? "band" : "radio";
+        const next = normalizeState(parsed, importedMode);
+        if (importedMode === mode) update(next);
+        else onImport(next, importedMode);
       } catch {
         alert("JSONを読み込めませんでした。");
       }
@@ -705,19 +788,16 @@ function HostApp() {
   };
 
   const reset = () => {
-    if (!confirm("入力内容を初期状態に戻しますか？")) return;
-    const next = makeDefaultState();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    setData(next);
+    if (!confirm(`${isBand ? "バンド" : "ラジオ"}の入力内容を初期状態に戻しますか？`)) return;
+    update(makeDefaultState(mode));
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${isBand ? "band-mode" : "radio-mode"}`}>
       <header className="app-header">
         <div>
           <span className="eyebrow">Umbrella Parade Toolkit</span>
-          <h1>Radio Meeting Scheduler</h1>
-          <p>ゲスト打ち合わせの日程候補づくり、共有調整ページ、DM文面、文章ブロック、プリセットをまとめます。</p>
+          <h1>{isBand ? "Band Schedule" : "Radio Meeting Scheduler"}</h1>
         </div>
         <div className="header-actions">
           <button className="secondary" onClick={exportJson}>
@@ -733,27 +813,65 @@ function HostApp() {
         </div>
       </header>
 
+      <div className="mode-tabs" role="tablist" aria-label="スケジュールの種類">
+        {[
+          { id: "band", label: "バンド", Icon: Guitar },
+          { id: "radio", label: "ラジオ", Icon: Radio }
+        ].map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            id={`mode-tab-${id}`}
+            role="tab"
+            aria-selected={mode === id}
+            aria-controls="schedule-workspace"
+            tabIndex={mode === id ? 0 : -1}
+            onClick={() => onModeChange(id)}
+            onKeyDown={(event) => {
+              const nextMode = event.key === "Home" ? "band" : event.key === "End" ? "radio" :
+                ["ArrowLeft", "ArrowRight"].includes(event.key) ? (mode === "band" ? "radio" : "band") : null;
+              if (!nextMode) return;
+              event.preventDefault();
+              onModeChange(nextMode);
+              requestAnimationFrame(() => document.getElementById(`mode-tab-${nextMode}`)?.focus());
+            }}
+          >
+            <Icon size={20} />{label}
+          </button>
+        ))}
+      </div>
+
+      <div id="schedule-workspace" role="tabpanel" aria-labelledby={`mode-tab-${mode}`}>
       <section className="layout">
         <div className="panel">
           <div className="panel-head">
-            <h2>打ち合わせ設定</h2>
+            <h2>{isBand ? "バンド スタジオリハ" : "打ち合わせ設定"}</h2>
             <span>{enabledCandidates.length}候補</span>
           </div>
           <div className="form-grid">
-            <Field label="放送回タイトル">
-              <TextInput value={data.episodeTitle} onChange={(event) => update({ episodeTitle: event.target.value })} />
-            </Field>
-            <Field label="ゲスト名">
-              <TextInput value={data.guestName} onChange={(event) => update({ guestName: event.target.value })} placeholder="例: ヴェル13世" />
-            </Field>
-            <Field label="放送予定日">
+            {!isBand && (
+              <>
+                <Field label="放送回タイトル">
+                  <TextInput value={data.episodeTitle} onChange={(event) => update({ episodeTitle: event.target.value })} />
+                </Field>
+                <Field label="ゲスト名">
+                  <TextInput value={data.guestName} onChange={(event) => update({ guestName: event.target.value })} placeholder="例: ヴェル13世" />
+                </Field>
+              </>
+            )}
+            <Field label={isBand ? "スタジオ予定日" : "放送予定日"}>
               <input type="date" value={data.broadcastDate} onChange={(event) => updateBroadcastDate(event.target.value)} />
             </Field>
             <Field label="所要時間">
-              <select value={data.durationMinutes} onChange={(event) => update({ durationMinutes: Number(event.target.value) })}>
-                <option value={30}>30分</option>
-                <option value={45}>45分</option>
-                <option value={60}>60分</option>
+              <select value={data.durationMinutes} onChange={(event) => updateDuration(Number(event.target.value))}>
+                {isBand ? BAND_DURATION_OPTIONS.map((minutes) => (
+                  <option key={minutes} value={minutes}>{minutes / 60}時間</option>
+                )) : (
+                  <>
+                    <option value={30}>30分</option>
+                    <option value={45}>45分</option>
+                    <option value={60}>60分</option>
+                  </>
+                )}
               </select>
             </Field>
             <Field label="候補開始日">
@@ -763,13 +881,13 @@ function HostApp() {
               <input type="date" value={data.candidateEndDate || ""} onChange={(event) => update({ candidateEndDate: event.target.value })} />
             </Field>
             <div className="range-actions wide">
-              <p className="hint">候補にしたい日付をそのまま選びます。放送日を変更すると、いったん1週間前から前日までに戻ります。</p>
+              {!isBand && <p className="hint">候補にしたい日付をそのまま選びます。放送日を変更すると、いったん1週間前から前日までに戻ります。</p>}
               <button className="secondary" onClick={resetCandidateRange}>
-                <CalendarDays size={16} />1週間前から前日にする
+                <CalendarDays size={16} />{isBand ? "スタジオ予定日から1週間" : "1週間前から前日にする"}
               </button>
             </div>
-            <Field label="打ち合わせ場所" wide>
-              <TextInput value={data.meetingPlace} onChange={(event) => update({ meetingPlace: event.target.value })} />
+            <Field label={isBand ? "スタジオ場所" : "打ち合わせ場所"} wide>
+              <TextInput value={data.meetingPlace} onChange={(event) => update({ meetingPlace: event.target.value })} placeholder={isBand ? "スタジオ名・住所（未定なら空欄）" : undefined} />
             </Field>
           </div>
 
@@ -817,7 +935,7 @@ function HostApp() {
                   <input type="checkbox" checked={candidate.enabled} onChange={() => toggleCandidate(candidate.id)} />
                   <span>{formatJapaneseDate(candidate.date)}</span>
                 </label>
-                <strong>{candidate.start}-{candidate.end}</strong>
+                <strong>{formatCandidateTime(candidate)}</strong>
                 <button className="icon-danger" onClick={() => removeCandidate(candidate.id)} aria-label="候補を削除">
                   <Trash2 size={16} />
                 </button>
@@ -841,9 +959,9 @@ function HostApp() {
       <section className="dm-workspace">
         <article className="output-block dm-editor">
           <div className="output-head">
-            <h2>ゲストDM文面</h2>
+            <h2>{isBand ? "メンバーへの連絡文面" : "ゲストDM文面"}</h2>
             <div className="inline-actions">
-              <button className="secondary" onClick={() => update({ guestDmDraft: DEFAULT_DM_TEMPLATE })}>
+              <button className="secondary" onClick={() => update({ guestDmDraft: defaultTemplate })}>
                 <RefreshCcw size={16} />初期文
               </button>
               <button className="secondary" onClick={() => copyText(guestDm, "dm", setCopied)}>
@@ -852,8 +970,8 @@ function HostApp() {
               </button>
             </div>
           </div>
-          <textarea value={data.guestDmDraft} onChange={(event) => update({ guestDmDraft: event.target.value })} />
-          <p className="hint">差し込み: {TEMPLATE_VARIABLES.join(" / ")}。コピー時に実際の内容へ置き換わります。</p>
+          <textarea aria-label={isBand ? "メンバーへの連絡文面" : "ゲストDM文面"} value={data.guestDmDraft} onChange={(event) => update({ guestDmDraft: event.target.value })} />
+          <p className="hint">差し込み: {(isBand ? BAND_TEMPLATE_VARIABLES : TEMPLATE_VARIABLES).join(" / ")}。コピー時に実際の内容へ置き換わります。</p>
           <div className="rendered-preview">
             <strong>コピー内容プレビュー</strong>
             <pre>{guestDm}</pre>
@@ -930,8 +1048,8 @@ function HostApp() {
                           className="icon-danger"
                           onClick={() => removeTemplateBlock(block.id)}
                           disabled={!saved}
-                          aria-label={DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id) ? "文章ブロックを初期状態に戻す" : "文章ブロックを削除"}
-                          title={DEFAULT_TEMPLATE_BLOCK_IDS.has(block.id) ? "初期状態に戻す" : "削除"}
+                          aria-label={defaultBlockIds.has(block.id) ? "文章ブロックを初期状態に戻す" : "文章ブロックを削除"}
+                          title={defaultBlockIds.has(block.id) ? "初期状態に戻す" : "削除"}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -960,7 +1078,7 @@ function HostApp() {
       <section className="panel">
         <div className="panel-head">
           <h2>決定後の記録</h2>
-          <span>次の制作工程へ渡すメモ</span>
+          <span>{isBand ? "スタジオリハの記録" : "次の制作工程へ渡すメモ"}</span>
         </div>
         <div className="form-grid">
           <Field label="決定日時">
@@ -973,11 +1091,12 @@ function HostApp() {
               <option value="fixed">日程決定</option>
             </select>
           </Field>
-          <Field label="打ち合わせメモ" wide>
-            <textarea value={data.meetingNotes} onChange={(event) => update({ meetingNotes: event.target.value })} placeholder="確認したいこと、当日の議題、決定事項など" />
+          <Field label={isBand ? "スタジオリハメモ" : "打ち合わせメモ"} wide>
+            <textarea value={data.meetingNotes} onChange={(event) => update({ meetingNotes: event.target.value })} placeholder={isBand ? "練習曲、必要な機材、予約内容など" : "確認したいこと、当日の議題、決定事項など"} />
           </Field>
         </div>
       </section>
+      </div>
     </main>
   );
 }
@@ -997,9 +1116,47 @@ function OutputBlock({ title, text, copied, copyId, onCopy, setCopied }) {
   );
 }
 
+function HostApp() {
+  const [workspaces, setWorkspaces] = useState(() => ({ radio: loadState("radio"), band: loadState("band") }));
+  const [mode, setMode] = useState(() => {
+    try {
+      return localStorage.getItem(ACTIVE_MODE_KEY) === "band" ? "band" : "radio";
+    } catch {
+      return "radio";
+    }
+  });
+  const changeMode = (nextMode) => {
+    localStorage.setItem(ACTIVE_MODE_KEY, nextMode);
+    setMode(nextMode);
+  };
+  // Keep pending share requests attached to their original workspace when switching tabs.
+  const updateWorkspace = (targetMode, patch) => {
+    setWorkspaces((current) => {
+      const next = { ...current[targetMode], ...patch };
+      localStorage.setItem(storageKeyFor(targetMode), JSON.stringify(next));
+      return { ...current, [targetMode]: next };
+    });
+  };
+  const importMode = (data, importedMode) => {
+    updateWorkspace(importedMode, data);
+    changeMode(importedMode);
+  };
+  return (
+    <SchedulerWorkspace
+      key={mode}
+      mode={mode}
+      data={workspaces[mode]}
+      update={(patch) => updateWorkspace(mode, patch)}
+      onModeChange={changeMode}
+      onImport={importMode}
+    />
+  );
+}
+
 function Root() {
-  const eventId = new URLSearchParams(window.location.search).get("e");
-  if (eventId) return <GuestApp eventId={eventId} />;
+  const params = new URLSearchParams(window.location.search);
+  const eventId = params.get("e");
+  if (eventId) return <GuestApp eventId={eventId} mode={params.get("mode") === "band" ? "band" : "radio"} />;
   return <HostApp />;
 }
 

@@ -6,6 +6,7 @@ import ResponseTable from "./ResponseTable.jsx";
 
 const GUEST_NAME_KEY = "radio-meeting-scheduler:guest-name";
 const GUEST_HEADER_IMAGE = `${import.meta.env.BASE_URL}sunopa-header.png`;
+const BAND_HEADER_IMAGE = `${import.meta.env.BASE_URL}umbrella-parade-logo.png`;
 
 const ANSWER_OPTIONS = [
   { value: "ok", label: "○", hint: "参加できる" },
@@ -13,12 +14,17 @@ const ANSWER_OPTIONS = [
   { value: "ng", label: "×", hint: "難しい" }
 ];
 
-function GuestHeader({ title, memo }) {
+function GuestHeader({ title, memo, mode }) {
+  const isBand = mode === "band";
   return (
     <header className="app-header guest-header">
-      <img className="guest-header-image" src={GUEST_HEADER_IMAGE} alt="Sunoパ！ presented by Umbrella Parade" />
+      <img
+        className={`guest-header-image${isBand ? " band-logo" : ""}`}
+        src={isBand ? BAND_HEADER_IMAGE : GUEST_HEADER_IMAGE}
+        alt={isBand ? "Umbrella Parade" : "Sunoパ！ presented by Umbrella Parade"}
+      />
       <div>
-        <span className="eyebrow">Umbrella Parade Toolkit</span>
+        <span className="eyebrow">{isBand ? "Umbrella Parade / Studio Rehearsal" : "Umbrella Parade Toolkit"}</span>
         <h1>{title}</h1>
         {memo && <p className="event-memo">{memo}</p>}
       </div>
@@ -26,7 +32,7 @@ function GuestHeader({ title, memo }) {
   );
 }
 
-export default function GuestApp({ eventId }) {
+export default function GuestApp({ eventId, mode = "radio" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [event, setEvent] = useState(null);
@@ -36,6 +42,8 @@ export default function GuestApp({ eventId }) {
   const [comment, setComment] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const pageMode = mode === "band" || event?.title === "バンド スタジオリハ" ? "band" : "radio";
+  const isBand = pageMode === "band";
 
   const load = async () => {
     setLoading(true);
@@ -112,7 +120,7 @@ export default function GuestApp({ eventId }) {
   if (loading) {
     return (
       <main className="app-shell guest-shell">
-        <GuestHeader title="日程調整" />
+        <GuestHeader title={isBand ? "バンド スタジオリハ" : "日程調整"} mode={pageMode} />
         <p className="empty">読み込み中...</p>
       </main>
     );
@@ -121,7 +129,7 @@ export default function GuestApp({ eventId }) {
   if (!event) {
     return (
       <main className="app-shell guest-shell">
-        <GuestHeader title="日程調整" />
+        <GuestHeader title={isBand ? "バンド スタジオリハ" : "日程調整"} mode={pageMode} />
         <p className="error-banner">{error || "イベントが見つかりませんでした。"}</p>
       </main>
     );
@@ -129,12 +137,12 @@ export default function GuestApp({ eventId }) {
 
   return (
     <main className="app-shell guest-shell">
-      <GuestHeader title={event.title} memo={event.memo} />
+      <GuestHeader title={event.title} memo={event.memo} mode={pageMode} />
 
       {event.decidedAt && (
         <div className="decided-banner">
           <Check size={18} />
-          日程が決定しました: <strong>{event.decidedAt}</strong>
+          {isBand ? "スタジオリハの日程が決まりました:" : "日程が決定しました:"} <strong>{event.decidedAt}</strong>
         </div>
       )}
 
@@ -142,19 +150,19 @@ export default function GuestApp({ eventId }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>出欠を入力</h2>
+          <h2>{isBand ? "スタジオリハの出欠" : "出欠を入力"}</h2>
           <span>
             {answeredCount}/{event.candidates.length}件 入力済み
           </span>
         </div>
 
         <label className="field guest-name-field">
-          <span>お名前</span>
+          <span>{isBand ? "メンバー名" : "お名前"}</span>
           <input
             type="text"
             value={name}
             onChange={(nameEvent) => setName(nameEvent.target.value)}
-            placeholder="例: ヴェル13世"
+            placeholder={isBand ? "バンドで呼ばれている名前" : "例: ヴェル13世"}
           />
         </label>
 
@@ -193,23 +201,23 @@ export default function GuestApp({ eventId }) {
         </div>
 
         <label className="field wide">
-          <span>コメント（任意）</span>
+          <span>{isBand ? "参加時間・スタジオの希望（任意）" : "コメント（任意）"}</span>
           <textarea
             value={comment}
             onChange={(commentEvent) => setComment(commentEvent.target.value)}
-            placeholder="例: 21時以降なら確実に参加できます"
+            placeholder={isBand ? "例: 19時から参加できます。駅近のスタジオ希望です。" : "例: 21時以降なら確実に参加できます"}
           />
         </label>
 
         <div className="submit-row">
           <button className="primary" onClick={submit} disabled={sending}>
             <Send size={16} />
-            {sending ? "送信中..." : sent ? "送信済み（再送信で上書き）" : "回答を送信"}
+            {sending ? "送信中..." : sent ? "送信済み（再送信で上書き）" : isBand ? "出欠を送信" : "回答を送信"}
           </button>
           {sent && (
             <span className="sent-note">
               <Check size={16} />
-              回答を受け付けました！
+              {isBand ? "スタジオリハの出欠を受け付けました！" : "回答を受け付けました！"}
             </span>
           )}
         </div>
@@ -218,7 +226,7 @@ export default function GuestApp({ eventId }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>みんなの回答</h2>
+          <h2>{isBand ? "メンバーの出欠一覧" : "みんなの回答"}</h2>
           <button className="secondary" onClick={load}>
             <RefreshCcw size={16} />
             更新
