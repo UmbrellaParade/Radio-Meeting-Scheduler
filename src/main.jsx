@@ -26,8 +26,7 @@ import {
   formatCandidateLabel,
   formatCandidateTime,
   formatInputDate,
-  formatJapaneseDate,
-  toDate
+  formatJapaneseDate
 } from "./lib.js";
 import { apiConfigured, createEvent, decideEvent, fetchEvent, updateEvent } from "./api.js";
 import GuestApp from "./guest.jsx";
@@ -35,6 +34,8 @@ import ResponseTable from "./ResponseTable.jsx";
 import { initialMode, shareUrlFor, startEmbedBridge } from "./embedding.js";
 import StudioSettings, { StudioLinks } from "./StudioSettings.jsx";
 import { normalizeStudios, safeWebUrl, studioLinkLines, studioSelection } from "./studios.js";
+import BandDatePicker from "./BandDatePicker.jsx";
+import { generateCandidates, getBandSelectedDates, getDefaultCandidateRange, normalizeCandidateRange, updateBandSelectedDates } from "./scheduling.js";
 
 const STORAGE_KEY = "radio-meeting-scheduler:v1";
 const ACTIVE_MODE_KEY = "meeting-scheduler:active-mode";
@@ -174,58 +175,6 @@ function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function getDefaultCandidateRange(broadcastDate, mode = "radio") {
-  if (!broadcastDate) return { candidateStartDate: "", candidateEndDate: "" };
-  if (mode === "band") {
-    return { candidateStartDate: broadcastDate, candidateEndDate: addDays(broadcastDate, 6) };
-  }
-  return {
-    candidateStartDate: addDays(broadcastDate, -7),
-    candidateEndDate: addDays(broadcastDate, -1)
-  };
-}
-
-function normalizeCandidateRange(settings) {
-  const fallback = getDefaultCandidateRange(settings.broadcastDate, settings.mode);
-  const legacyStartDays = Number(settings.leadStartDays || 7);
-  const legacyEndDays = Number(settings.leadEndDays || 1);
-  const candidateStartDate =
-    settings.candidateStartDate || (settings.mode !== "band" && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyStartDays) : fallback.candidateStartDate);
-  const candidateEndDate =
-    settings.candidateEndDate || (settings.mode !== "band" && settings.broadcastDate ? addDays(settings.broadcastDate, -legacyEndDays) : fallback.candidateEndDate);
-  if (!candidateStartDate || !candidateEndDate) return { startDate: "", endDate: "" };
-  return candidateStartDate <= candidateEndDate
-    ? { startDate: candidateStartDate, endDate: candidateEndDate }
-    : { startDate: candidateEndDate, endDate: candidateStartDate };
-}
-
-function generateCandidates(settings) {
-  const { startDate, endDate } = normalizeCandidateRange(settings);
-  if (!startDate || !endDate) return [];
-  const candidates = [];
-  const current = toDate(startDate);
-  const end = toDate(endDate);
-  while (current <= end) {
-    const date = formatInputDate(current);
-    const day = toDate(date).getDay();
-    if (settings.includeWeekends || (day !== 0 && day !== 6)) {
-      for (const startTime of settings.timeSlots) {
-        const cleanStart = startTime || "20:00";
-        const endTime = addMinutes(cleanStart, settings.durationMinutes);
-        candidates.push({
-          id: candidateId(date, cleanStart, settings.durationMinutes),
-          date,
-          start: cleanStart,
-          end: endTime,
-          enabled: true
-        });
-      }
-    }
-    current.setDate(current.getDate() + 1);
-  }
-  return candidates;
-}
-
 function makeDefaultState(mode = "radio") {
   const isBand = mode === "band";
   const broadcastDate = formatInputDate(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000));
@@ -236,6 +185,7 @@ function makeDefaultState(mode = "radio") {
     guestName: "",
     broadcastDate,
     ...candidateRange,
+    ...(isBand ? { selectedDates: [broadcastDate] } : {}),
     includeWeekends: true,
     durationMinutes: isBand ? 180 : 30,
     timeSlots: isBand ? ["18:00", "19:00", "20:00"] : ["20:00", "21:00", "22:00"],
@@ -271,6 +221,7 @@ function normalizeState(input = {}, mode = "radio") {
   }
   delete next.leadStartDays;
   delete next.leadEndDays;
+  if (mode === "band") next.selectedDates = getBandSelectedDates({ ...next, selectedDates: input.selectedDates, candidates: input.candidates });
   if (!Array.isArray(next.candidates)) next.candidates = generateCandidates(next);
   if (next.share && !next.share.id) next.share = null;
   const legacyScheduleUrlKey = ["chousei", "sanUrl"].join("");
@@ -651,7 +602,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
   };
 
   const updateBroadcastDate = (broadcastDate) => {
-    update({ broadcastDate, ...getDefaultCandidateRange(broadcastDate, mode) });
+    update({ broadcastDate, ...(isBand ? {} : getDefaultCandidateRange(broadcastDate, mode)) });
   };
 
   const resetCandidateRange = () => {
@@ -888,6 +839,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
                 )}
               </select>
             </Field>
+            {isBand ? <BandDatePicker selectedDates={data.selectedDates} broadcastDate={data.broadcastDate} onChange={(dates) => update(updateBandSelectedDates(data, dates))} /> : <>
             <Field label="候補開始日">
               <input type="date" value={data.candidateStartDate || ""} onChange={(event) => update({ candidateStartDate: event.target.value })} />
             </Field>
@@ -895,11 +847,12 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
               <input type="date" value={data.candidateEndDate || ""} onChange={(event) => update({ candidateEndDate: event.target.value })} />
             </Field>
             <div className="range-actions wide">
-              {!isBand && <p className="hint">候補にしたい日付をそのまま選びます。放送日を変更すると、いったん1週間前から前日までに戻ります。</p>}
+              <p className="hint">候補にしたい日付をそのまま選びます。放送日を変更すると、いったん1週間前から前日までに戻ります。</p>
               <button className="secondary" onClick={resetCandidateRange}>
-                <CalendarDays size={16} />{isBand ? "スタジオ予定日から1週間" : "1週間前から前日にする"}
+                <CalendarDays size={16} />1週間前から前日にする
               </button>
             </div>
+            </>}
             {isBand && <Field label="登録済みスタジオ" wide>
               <select value={studios.some((studio) => studio.id === data.studioId) ? data.studioId : ""} onChange={(event) => update(studioSelection(studios.find((studio) => studio.id === event.target.value)))}>
                 <option value="">未定・直接入力</option>
@@ -912,15 +865,15 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
             {isBand && <div className="wide"><StudioLinks url={data.studioUrl} accessUrl={data.studioAccessUrl} /></div>}
           </div>
 
-          <label className="inline-check">
+          {!isBand && <label className="inline-check">
             <input type="checkbox" checked={data.includeWeekends} onChange={(event) => update({ includeWeekends: event.target.checked })} />
             土日も候補に含める
-          </label>
+          </label>}
 
           <div className="time-section">
             <div className="subhead">
               <strong>候補時間</strong>
-              <span>候補範囲: {formatJapaneseDate(candidateRange.startDate)}〜{formatJapaneseDate(candidateRange.endDate)}</span>
+              <span>{isBand ? `選択した${data.selectedDates.length}日` : `候補範囲: ${formatJapaneseDate(candidateRange.startDate)}〜${formatJapaneseDate(candidateRange.endDate)}`}</span>
             </div>
             <div className="time-list">
               {data.timeSlots.map((slot, index) => (
@@ -938,8 +891,8 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
                 </button>
               </div>
             </div>
-            <button className="primary" onClick={regenerate}>
-              <CalendarDays size={16} />候補日を自動生成
+            <button className="primary" onClick={regenerate} disabled={isBand && (!data.selectedDates.length || !data.timeSlots.length)}>
+              <CalendarDays size={16} />{isBand ? "選択した日付で候補時間を更新" : "候補日を自動生成"}
             </button>
           </div>
         </div>
@@ -962,7 +915,7 @@ function SchedulerWorkspace({ mode, data, update, onModeChange, onImport, studio
                 </button>
               </div>
             ))}
-            {data.candidates.length === 0 && <p className="empty">候補日を自動生成してください。</p>}
+            {data.candidates.length === 0 && <p className="empty">{isBand ? "候補日時がありません。" : "候補日を自動生成してください。"}</p>}
           </div>
         </div>
       </section>
